@@ -235,19 +235,29 @@ jobs:
           print("✅ 入口 plist / prefs bundle / tweak dylib / filter plist 齐全")
 
           # ---- 3. dylib 切片断言：必须含 arm64e (cpusubtype 0x80000002) ----
+          # ⭐ cpusubtype 必须按无符号解析（0x80000002 有符号 = -2147483646，比较永远失败）
+          def has_arm64e(blob):
+              if blob[:4] == b"\xca\xfe\xba\xbe":  # fat 32（大端，arch 头 20B）
+                  n = struct.unpack(">I", blob[4:8])[0]
+                  for i in range(n):
+                      ct, sub = struct.unpack(">II", blob[8+20*i:16+20*i])
+                      if ct == 0x0100000C and sub == 0x80000002: return True
+                  return False
+              if blob[:4] == b"\xca\xfe\xba\xbf":  # fat 64（大端，arch 头 32B）
+                  n = struct.unpack(">I", blob[4:8])[0]
+                  for i in range(n):
+                      ct, sub = struct.unpack(">II", blob[8+32*i:16+32*i])
+                      if ct == 0x0100000C and sub == 0x80000002: return True
+                  return False
+              if struct.unpack("<I", blob[:4])[0] == 0xfeedfacf:  # thin 64（小端）
+                  ct, sub = struct.unpack("<II", blob[4:12])
+                  return ct == 0x0100000C and sub == 0x80000002
+              return False
+
           for m in dt.getmembers():
               if m.name.endswith("DynamicLibraries/WXGlass.dylib"):
                   blob = dt.extractfile(m).read()
-                  arm64e = False
-                  if blob[:4] == b"\xca\xfe\xba\xbe":  # fat 大端
-                      n = struct.unpack(">I", blob[4:8])[0]
-                      for i in range(n):
-                          ct_, sub, off, sz, _ = struct.unpack(">iiIII", blob[8+20*i:28+20*i])
-                          if ct_ == 0x0100000C and sub == 0x80000002: arm64e = True
-                  elif struct.unpack("<I", blob[:4])[0] == 0xfeedfacf:  # thin 64 LE
-                      ct_, sub = struct.unpack("<ii", blob[4:12])
-                      if ct_ == 0x0100000C and sub == 0x80000002: arm64e = True
-                  assert arm64e, "❌ dylib 缺 arm64e 切片"
+                  assert has_arm64e(blob), "❌ dylib 缺 arm64e 切片"
                   print(f"✅ WXGlass.dylib 含 arm64e 切片（{len(blob)}B）")
                   break
 
@@ -255,16 +265,7 @@ jobs:
           for m in dt.getmembers():
               if m.name.endswith("WXGlassPrefs.bundle/WXGlassPrefs"):
                   blob = dt.extractfile(m).read()
-                  arm64e = False
-                  if blob[:4] == b"\xca\xfe\xba\xbe":
-                      n = struct.unpack(">I", blob[4:8])[0]
-                      for i in range(n):
-                          ct_, sub, off, sz, _ = struct.unpack(">iiIII", blob[8+20*i:28+20*i])
-                          if ct_ == 0x0100000C and sub == 0x80000002: arm64e = True
-                  elif struct.unpack("<I", blob[:4])[0] == 0xfeedfacf:
-                      ct_, sub = struct.unpack("<ii", blob[4:12])
-                      if ct_ == 0x0100000C and sub == 0x80000002: arm64e = True
-                  assert arm64e, "❌ prefs bundle 二进制缺 arm64e 切片"
+                  assert has_arm64e(blob), "❌ prefs bundle 二进制缺 arm64e 切片"
                   print(f"✅ WXGlassPrefs bundle 含 arm64e 切片（{len(blob)}B）")
                   break
 
