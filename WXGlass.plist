@@ -6,7 +6,8 @@
     <dict>
         <key>Bundles</key>
         <array>
-            <string>com.apple.UIKit</string>
+            <string>com.tencent.wetype</string>
+            <string>com.tencent.wetype.keyboard</string>
         </array>
     </dict>
 </dict>
