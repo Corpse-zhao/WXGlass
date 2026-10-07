@@ -180,19 +180,28 @@ else
     bad "启动横幅未在进程判定之前 → 无法定位注入失败"
 fi
 
-# ── 10. ⭐⭐⭐ 致命项：%ctor 必须显式 %init ───────────────────
+# ── 10. ⭐⭐⭐ %init 使用规则（读 Logos 源码后的定论）───────────
 echo ""
-echo "[10/10] Logos %init 铁律"
-if grep -q '%ctor' Tweak.x 2>/dev/null; then
-    # 只在非注释行里找 %init（否则注释里提到的 %init 会造成假绿）
-    if grep -vE '^\s*//' Tweak.x | grep -qE '^\s*%init\s*;'; then
-        ok "%ctor 内含 %init;（hook 会真正激活）"
-    else
-        bad "有 %ctor 但没有 %init; → 所有 %hook 静默不激活！！！"
-        bad "  ↑ 这是 v0.1.0~v0.2.0 白测三轮的元凶：编译过、CI 绿、装了毫无反应"
-    fi
+echo "[10/10] Logos %ctor/%init 规则"
+# 【Logos 源码实锤 bin/logos.pl】
+#   · %ctor → 独立的 __attribute__((constructor)) 函数（第 554~558 行）
+#   · 默认构造器 _logosLocalInit() **只在全文件无 %init 时**才生成（第 875 行）
+#   · %init 是把 group 初始化语句**原样展开在该行**（第 566 行起）
+#   → 结论：%ctor 与默认构造器**互不取代**，写了 %ctor 也照样挂 hook。
+#   → 但**手写 %init 反而会编译失败**：展开出的代码引用文件后部才声明的
+#     `_logos_method$...` 符号 → use of undeclared identifier。
+#   → 所以本项目：**禁止手写 %init**。
+if grep -vE '^\s*//' Tweak.x | grep -qE '^\s*%init\s*;'; then
+    bad "Tweak.x 手写了 %init; → 会展开引用后部声明的 _logos_method\$ 符号 → 编译失败"
+    bad "  ↑ 默认构造器已自动生成，手写 %init 是多余的且会 break 构建"
 else
-    ok "无 %ctor（Logos 自动生成构造器，无需 %init）"
+    ok "未手写 %init（交给 Logos 默认构造器，避免前置引用）"
+fi
+# %ctor 存在即可，无需额外条件 —— 但必须确认它确实在文件里
+if grep -qE '^\s*%ctor' Tweak.x; then
+    ok "存在 %ctor（展开为独立 constructor，与默认构造器并列执行）"
+else
+    bad "缺少 %ctor"
 fi
 
 # ── 汇总 ────────────────────────────────────────────────────

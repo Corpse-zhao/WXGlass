@@ -29,7 +29,7 @@ static WXGGlassView *sGlass = nil;
 
 // ⭐ v0.2.1：hook 命中计数 —— 这是判断「锚点对不对」的核心指标。
 //  0 = hook 挂在了一个系统从不调用的类上（静默死代码，血泪 §56）
-//  0 也可能是 %init 缺失导致全部 hook 未激活（更致命，且更隐蔽）
+//  也是判断「注入是否到进程」+「判定是否误杀」的核心指标（配合启动横幅一起看）
 //  >0 = 锚点命中，问题在后续链路
 static volatile int32_t sHookHits = 0;
 
@@ -264,17 +264,33 @@ static void WXGWorkerTick(void) {
 
 #pragma mark - %ctor
 
+// ⭐⭐⭐⭐⭐ 血泪大坑（v0.1.0 ~ v0.2.1，白测三轮后**读 Logos 源码**才定论）：
+//
+//   【错误认知，已推翻】「手写 %ctor 会取代 Logos 自动构造器，
+//    必须手写 %init 否则 hook 静默不激活」——**这是错的**。
+//
+//   【Logos 源码实锤】bin/logos.pl：
+//     · `%ctor` 展开成**独立的** `static __attribute__((constructor)) void
+//        _logosLocalCtor_XXXX(...)`（第 554~558 行）
+//     · 默认构造器 `_logosLocalInit()` **只在「全文件没有任何 %init」
+//        时才自动生成**（第 875 行：`if(!@lastInitPosition) { ... }`）
+//     · `%init` 是**把 group 的初始化语句原样展开在该行位置**（第 566 行起）
+//   → 也就是说：**写了 %ctor 但没写 %init，默认构造器照样生成、hook 照样挂上**。
+//     二者是并列的 constructor，互不取代。之前的 hook 一直是生效的。
+//
+//   【为什么加了 %init 反而编译失败】`%init` 展开出的初始化代码引用了
+//     `_logos_method$_ungrouped$XXX$yyy` 等符号，而这些符号的**声明在文件后部**；
+//     在本行展开 = 前置引用 → `use of undeclared identifier`。
+//     👉 所以：**本项目不要手写 %init**（也没有必要），交给默认构造器即可。
+//
+//   【那「探针有启动横幅、却没有锚点命中、彩条也不出现」怎么解释？】
+//     既然 hook 本来就是生效的，根因就不在这里，而是：
+//       ① 注入层没进到键盘进程（bundle ID 是猜的）→ 见 WXGlass.plist
+//       ② 即便注入，判定/链路有别的断点 → 见下方 hook 自检日志
+//     本轮保留「hook 命中自检」正是为了用**数据**回答这个问题，
+//     而不是继续靠推断猜根因。
 %ctor {
     @autoreleasepool {
-        // ⭐⭐⭐⭐⭐ 血泪大坑（v0.1.0 ~ v0.2.0 全部中招，白测三轮）：
-        //   Logos 铁律 —— **写了 %ctor 就必须显式 %init()**，
-        //   否则 %ctor 会完全取代 Logos 自动生成的构造器，
-        //   **下面所有 %hook 静默不激活**（编译过、CI 绿、deb 正常、插件正常加载，
-        //   但一条 hook 都没挂上 = 彻头彻尾的死代码）。
-        //   这正是「探针有启动横幅、却没有锚点命中、彩条也不出现」的直接根因。
-        //   👉 任何 %ctor 的第一行必须是 %init; 没有例外。
-        %init;
-
         // ⭐⭐ v0.2.0 铁律：本条日志必须在**任何** 进程判定/开关之前写。
         //  它是「插件有没有被注入到这个进程」的唯一证据。
         //  以前先判进程、不命中就 return，导致「没注入」和「注入了但被判定滤掉」
@@ -323,11 +339,14 @@ static void WXGWorkerTick(void) {
         // 心跳：每 2s 打一行，证明确实活着（也便于看 worker 有没有跑起来）
         WXGStartHeartbeat();
 
-        // ⭐ 自证 hook 是否真的挂上：%init 缺失时 sHookHits 恒为 0，
-        //   4 秒后主动打一行，避免「没有日志 = 以为探针坏了」
+        // ⭐ 自证 hook 是否真的挂上：4 秒后主动打一行命中次数。
+        //   0 = 锚点类根本没被调用（或注入没进本进程），
+        //   >0 = hook 生效，问题在后续链路 —— 用数据代替推断定位。
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
-            WXGLog(@"🔎 hook 自检：4s 内命中 %d 次（0 = hook 未生效，检查 %init）",
+            // ⚠️ 格式串里的 %%init 必须双写 —— WXGLog 是真 variadic 函数
+            //    （带 NS_FORMAT_FUNCTION），单写 %i 会被当成格式符。
+            WXGLog(@"🔎 hook 自检：4s 内命中 %d 次（0 = hook 未生效，检查 %%init）",
                    (int)sHookHits);
         });
 
