@@ -133,6 +133,30 @@ jobs:
             || { echo "❌ 玻璃层必须 userInteractionEnabled = NO（否则可能挡住键盘触摸）"; exit 1; }
           echo "✅ 触摸安全"
 
+      - name: Lint 禁止用字符串搜索断言包内 plist（二进制 plist 假阴性）
+        run: |
+          set -e
+          python3 - <<'PY'
+          import re, sys
+          src = open(".github/workflows/build.yml", encoding="utf-8").read()
+          # ⭐ 血泪：FINALPACKAGE=1 时 theos 把所有包内 plist 转成二进制（bplist00），
+          #    此时 `"<key>X</key>" in blob` 恒为 False —— 包是对的、CI 却红。
+          #    正确姿势：plistlib.loads(...) 后查键。
+          # 只看非注释行，否则本 lint 会自己触发自己。
+          code = "\n".join(l for l in src.split("\n") if not l.lstrip().startswith("#"))
+          bad = re.findall(r'["\']<key>[^"\']*</key>["\']\s+in\s+', code)
+          if bad:
+              print("❌ Verify 里出现字符串搜索 plist 的写法（二进制 plist 必假阴性）：")
+              for b in bad:
+                  print("   ", b)
+              print("   → 改用 plistlib.loads(bytes)[key]")
+              sys.exit(1)
+          if "plistlib" not in src:
+              print("❌ Verify 必须用 plistlib 解析包内 plist")
+              sys.exit(1)
+          print("✅ plist 断言走 plistlib（无二进制假阴性）")
+          PY
+
   # ────────────────────────────────────────────────────────────
   #  Stage 2：macOS 真编译（arm64e 必须 Apple 原生 clang+ld64）
   # ────────────────────────────────────────────────────────────
@@ -184,7 +208,7 @@ jobs:
         run: |
           set -euo pipefail
           PYTHONUTF8=1 python3 - <<'PY'
-          import tarfile, io, lzma, struct, sys, glob
+          import tarfile, io, lzma, struct, sys, glob, plistlib
 
           debs = glob.glob("tweak/packages/*.deb")
           assert debs, "❌ 没有找到 deb 产物"
@@ -250,14 +274,38 @@ jobs:
           print("✅ 入口 plist / prefs bundle(含 Info.plist) / tweak dylib / filter plist 齐全")
 
           # ---- 2b. bundle Info.plist 必须真的含 NSPrincipalClass ----
-          # ⭐ 历史坑：Info.plist 放在 Preferences/ 根目录不会被打进 bundle，
+          # ⭐ 历史坑1：Info.plist 放在 Preferences/ 根目录不会被打进 bundle，
           #    结果包内有控制器二进制但无 NSPrincipalClass → 设置入口点进去白屏。
-          _im = next(m for m in dt.getmembers()
-                     if m.name.lstrip("./") == "Library/PreferenceBundles/WXGlassPrefs.bundle/Info.plist")
-          _ib = dt.extractfile(_im).read().decode(errors="replace")
-          assert "<key>NSPrincipalClass</key>" in _ib, "❌ bundle Info.plist 缺 NSPrincipalClass 键"
-          assert "WXGlassPrefsListController" in _ib, "❌ NSPrincipalClass 不是 WXGlassPrefsListController"
+          # ⭐ 历史坑2：FINALPACKAGE=1 时 theos bin/convert_xml_plist.sh 会把包内
+          #    所有 plist 转成 **二进制 plist**（bplist00），此时用字符串搜
+          #    "<key>NSPrincipalClass</key>" 永远搜不到 —— 必须用 plistlib 解析，
+          #    否则就是「包明明是对的、CI 却红」的假阴性。
+          def _read_plist(member_name):
+              _m = next(m for m in dt.getmembers()
+                        if m.name.lstrip("./") == member_name)
+              return plistlib.loads(dt.extractfile(_m).read())
+
+          _bundle_info = _read_plist("Library/PreferenceBundles/WXGlassPrefs.bundle/Info.plist")
+          print("bundle Info.plist keys =", sorted(_bundle_info.keys()))
+          assert _bundle_info.get("NSPrincipalClass"), "❌ bundle Info.plist 缺 NSPrincipalClass 键"
+          assert _bundle_info["NSPrincipalClass"] == "WXGlassPrefsListController", (
+              f"❌ NSPrincipalClass 不是 WXGlassPrefsListController（实际 {_bundle_info['NSPrincipalClass']}）")
+          assert _bundle_info.get("CFBundleExecutable") == "WXGlassPrefs", (
+              f"❌ CFBundleExecutable 不是 WXGlassPrefs（实际 {_bundle_info.get('CFBundleExecutable')}）")
           print("✅ bundle Info.plist 含 NSPrincipalClass = WXGlassPrefsListController")
+
+          # ---- 2c. 入口 plist 必须是 entry 包裹结构（PreferenceLoader 只认这种） ----
+          # ⭐ 扁平字典会被 PreferenceLoader 静默跳过 → 设置里完全没入口。
+          _entry = _read_plist("Library/PreferenceLoader/Preferences/WXGlass.plist")
+          assert "entry" in _entry, "❌ 入口 plist 顶层缺少 entry 键（扁平字典会被跳过）"
+          _e = _entry["entry"]
+          for _k in ("bundle", "cell", "detail", "isController", "label"):
+              assert _k in _e, f"❌ 入口 plist entry 缺 {_k} 键"
+          assert _e["bundle"] == "WXGlassPrefs", f"❌ entry.bundle 不是 WXGlassPrefs（实际 {_e.get('bundle')}）"
+          assert _e["detail"] == "WXGlassPrefsListController", (
+              f"❌ entry.detail 不是 WXGlassPrefsListController（实际 {_e.get('detail')}）")
+          assert _e["isController"] in (True, "true", "YES", "1", 1), "❌ entry.isController 不是真值"
+          print(f"✅ 入口 plist entry 包裹正确（bundle={_e['bundle']} detail={_e['detail']}）")
 
           # ---- 3. dylib 切片断言：必须含 arm64e (cpusubtype 0x80000002) ----
           # ⭐ cpusubtype 必须按无符号解析（0x80000002 有符号 = -2147483646，比较永远失败）
