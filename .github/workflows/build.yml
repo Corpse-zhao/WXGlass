@@ -173,43 +173,103 @@ jobs:
           gmake package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide 2>&1
           ls -la packages/
 
-      - name: Verify deb (架构字段 + 内部布局)
+      - name: Verify deb (架构字段 + 内部布局 + arm64e 切片，纯 Python)
         run: |
           set -euo pipefail
-          DEB=$(ls tweak/packages/*.deb | head -1)
-          echo "deb = $DEB"
-          dpkg-deb -I "$DEB" | tee /tmp/deb.info
+          PYTHONUTF8=1 python3 - <<'PY'
+          import tarfile, io, lzma, struct, sys, glob
 
-          echo "── 断言 Architecture: iphoneos-arm64e ──"
-          grep -q 'Architecture: iphoneos-arm64e' /tmp/deb.info \
-            || { echo "❌ 产物架构不是 iphoneos-arm64e"; exit 1; }
+          debs = glob.glob("tweak/packages/*.deb")
+          assert debs, "❌ 没有找到 deb 产物"
+          deb = debs[0]
+          print("deb =", deb)
 
-          echo "── 断言入口 plist 在包内 ──"
-          dpkg-deb -c "$DEB" | tee /tmp/deb.list
-          grep -q 'PreferenceLoader/Preferences/WXGlass.plist' /tmp/deb.list \
-            || { echo "❌ 包内没有 PreferenceLoader 入口 plist"; exit 1; }
+          # ---- 解析 ar 归档 ----
+          with open(deb, "rb") as f:
+              magic = f.read(8)
+              assert magic == b"!<arch>\n", "❌ 不是 ar 归档"
+              members = {}
+              while True:
+                  hdr = f.read(60)
+                  if len(hdr) < 60: break
+                  name = hdr[:16].decode().strip()
+                  size = int(hdr[48:58].decode().strip())
+                  body = f.read(size)
+                  if size % 2: f.read(1)
+                  members[name] = body
 
-          echo "── 断言 bundle 二进制在包内 ──"
-          grep -q 'PreferenceBundles/WXGlassPrefs.bundle/WXGlassPrefs' /tmp/deb.list \
-            || { echo "❌ 包内没有 WXGlassPrefs bundle 二进制"; exit 1; }
+          # ---- 1. control: Architecture 断言 ----
+          ctrl_name = next(n for n in members if n.startswith("control.tar"))
+          ct = tarfile.open(fileobj=io.BytesIO(members[ctrl_name]))
+          ctrl = b""
+          for m in ct.getmembers():
+              if m.name.lstrip("./") in ("control", "control"):
+                  ctrl = ct.extractfile(m).read(); break
+          ctrl_text = ctrl.decode()
+          print("--- control ---"); print(ctrl_text)
+          assert "Architecture: iphoneos-arm64e" in ctrl_text, "❌ 架构不是 iphoneos-arm64e"
+          assert "Version: 0.1.0" in ctrl_text, "❌ 版本不是 0.1.0"
+          print("✅ Architecture: iphoneos-arm64e / Version: 0.1.0")
 
-          echo "── 断言 tweak dylib 在包内 ──"
-          grep -qE 'MobileSubstrate/DynamicLibraries/WXGlass.dylib' /tmp/deb.list \
-            || { echo "❌ 包内没有 tweak dylib"; exit 1; }
+          # ---- 2. data: 布局断言 ----
+          data_name = next(n for n in members if n.startswith("data.tar"))
+          raw = members[data_name]
+          # lzma alone 格式优先（theos 默认），失败再试 xz/gz
+          try:
+              dt = tarfile.open(fileobj=io.BytesIO(raw), mode="r:xz")
+          except Exception:
+              try:
+                  dt = tarfile.open(fileobj=io.BytesIO(lzma.decompress(raw, format=lzma.FORMAT_ALONE)))
+              except Exception:
+                  dt = tarfile.open(fileobj=io.BytesIO(raw), mode="r:*")
+          names = [m.name.lstrip("./") for m in dt.getmembers()]
+          paths = "\n".join(names)
 
-          echo "✅ deb 结构校验全部通过"
+          for need in (
+              "Library/PreferenceLoader/Preferences/WXGlass.plist",
+              "Library/PreferenceBundles/WXGlassPrefs.bundle/WXGlassPrefs",
+              "Library/MobileSubstrate/DynamicLibraries/WXGlass.dylib",
+              "Library/MobileSubstrate/DynamicLibraries/WXGlass.plist",
+          ):
+              assert need in paths, f"❌ 包内缺少 {need}"
+          print("✅ 入口 plist / prefs bundle / tweak dylib / filter plist 齐全")
 
-      - name: Verify dylib 是真 arm64e 切片
-        run: |
-          set -euo pipefail
-          DEB=$(ls tweak/packages/*.deb | head -1)
-          rm -rf /tmp/x && mkdir -p /tmp/x
-          dpkg-deb -x "$DEB" /tmp/x
-          DYL=$(find /tmp/x -name 'WXGlass.dylib' | head -1)
-          echo "dylib = $DYL"
-          lipo -info "$DYL" | tee /tmp/lipo.txt
-          grep -q 'arm64e' /tmp/lipo.txt || { echo "❌ dylib 缺 arm64e 切片"; exit 1; }
-          echo "✅ dylib 含 arm64e"
+          # ---- 3. dylib 切片断言：必须含 arm64e (cpusubtype 0x80000002) ----
+          for m in dt.getmembers():
+              if m.name.endswith("DynamicLibraries/WXGlass.dylib"):
+                  blob = dt.extractfile(m).read()
+                  arm64e = False
+                  if blob[:4] == b"\xca\xfe\xba\xbe":  # fat 大端
+                      n = struct.unpack(">I", blob[4:8])[0]
+                      for i in range(n):
+                          ct_, sub, off, sz, _ = struct.unpack(">iiIII", blob[8+20*i:28+20*i])
+                          if ct_ == 0x0100000C and sub == 0x80000002: arm64e = True
+                  elif struct.unpack("<I", blob[:4])[0] == 0xfeedfacf:  # thin 64 LE
+                      ct_, sub = struct.unpack("<ii", blob[4:12])
+                      if ct_ == 0x0100000C and sub == 0x80000002: arm64e = True
+                  assert arm64e, "❌ dylib 缺 arm64e 切片"
+                  print(f"✅ WXGlass.dylib 含 arm64e 切片（{len(blob)}B）")
+                  break
+
+          # ---- 4. prefs bundle 二进制也查 arm64e ----
+          for m in dt.getmembers():
+              if m.name.endswith("WXGlassPrefs.bundle/WXGlassPrefs"):
+                  blob = dt.extractfile(m).read()
+                  arm64e = False
+                  if blob[:4] == b"\xca\xfe\xba\xbe":
+                      n = struct.unpack(">I", blob[4:8])[0]
+                      for i in range(n):
+                          ct_, sub, off, sz, _ = struct.unpack(">iiIII", blob[8+20*i:28+20*i])
+                          if ct_ == 0x0100000C and sub == 0x80000002: arm64e = True
+                  elif struct.unpack("<I", blob[:4])[0] == 0xfeedfacf:
+                      ct_, sub = struct.unpack("<ii", blob[4:12])
+                      if ct_ == 0x0100000C and sub == 0x80000002: arm64e = True
+                  assert arm64e, "❌ prefs bundle 二进制缺 arm64e 切片"
+                  print(f"✅ WXGlassPrefs bundle 含 arm64e 切片（{len(blob)}B）")
+                  break
+
+          print("🎉 deb 全部校验通过")
+          PY
 
       - name: Upload deb
         uses: actions/upload-artifact@v4
