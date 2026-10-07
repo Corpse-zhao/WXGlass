@@ -268,7 +268,8 @@ static void WXGWorkerTick(void) {
     %orig;
     if (!WXGIsWeChatProcess()) return;
     if (!WXGBool(@"enabled", YES)) return;
-    sSeenHost = self;
+    // ⭐ Logos 生成的接口无父类声明，self 赋 UIView* 需显式强转（-Werror）
+    sSeenHost = (UIView *)self;
     sDirty = YES;
 }
 %end
