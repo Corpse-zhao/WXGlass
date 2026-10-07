@@ -20,10 +20,11 @@ jobs:
 
       - name: Setup SDK (iPhoneOS16.5)
         run: |
-          git clone --filter=blob:none --sparse https://github.com/theos/sdks.git theos/sdks
-          cd theos/sdks
+          git clone --filter=blob:none --sparse https://github.com/theos/sdks.git sdksrc
+          cd sdksrc
           git sparse-checkout set iPhoneOS16.5.sdk
           git lfs pull
+          cp -r iPhoneOS16.5.sdk $GITHUB_WORKSPACE/theos/sdks/
 
       - name: Download iOS cross toolchain
         run: |
