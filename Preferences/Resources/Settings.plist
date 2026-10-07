@@ -64,6 +64,26 @@
 
         <dict>
             <key>cell</key><string>PSGroupCell</string>
+            <key>label</key><string>排障（没效果时打开）</string>
+            <key>footerText</key><string>① 先开「诊断色带」：键盘顶部出现红黄绿彩条 = 插件已生效，只是玻璃参数太淡；完全没彩条 = 插件没注入或没找到键盘宿主。② 再开「强制启用」：若开完彩条出现，说明是进程识别漏了本进程。</string>
+        </dict>
+        <dict>
+            <key>cell</key><string>PSSwitchCell</string>
+            <key>default</key><false/>
+            <key>defaults</key><string>com.banliren.wxglass</string>
+            <key>key</key><string>debugBanner</string>
+            <key>label</key><string>诊断色带（键盘顶部彩条）</string>
+        </dict>
+        <dict>
+            <key>cell</key><string>PSSwitchCell</string>
+            <key>default</key><false/>
+            <key>defaults</key><string>com.banliren.wxglass</string>
+            <key>key</key><string>forceAll</string>
+            <key>label</key><string>强制启用（忽略进程识别）</string>
+        </dict>
+
+        <dict>
+            <key>cell</key><string>PSGroupCell</string>
             <key>label</key><string>诊断</string>
             <key>footerText</key><string>若「键盘进程版本」为空或不一致，说明插件本体没加载到键盘进程。探针文件：/var/mobile/Documents/WXGlass/wxg_probe.txt</string>
         </dict>

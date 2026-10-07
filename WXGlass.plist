@@ -2,6 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!--
+      ⭐ v0.2.0 注入清单：同时用 Bundles 与 Executables 两条路命中。
+
+      血泪：微信输入法的键盘是 **app extension**，跑在独立进程里。
+      · Bundles    按 mainBundle.bundleIdentifier 匹配
+      · Executables 按**进程可执行文件名**匹配 ← 扩展进程最可靠的一条
+
+      扩展进程的 mainBundle 在不同 iOS 版本下可能是宿主 App、扩展、
+      或临时容器，单靠 Bundles 会漏；Executables 直接看进程名，稳得多。
+      两边都给全，任何一个命中就注入。
+    -->
     <key>Filter</key>
     <dict>
         <key>Bundles</key>
@@ -9,6 +20,15 @@
             <string>com.tencent.wetype</string>
             <string>com.tencent.wetype.keyboard</string>
             <string>com.tencent.xin</string>
+        </array>
+        <key>Executables</key>
+        <array>
+            <string>WeType</string>
+            <string>WeTypeKeyboard</string>
+            <string>WeTypeExtension</string>
+            <string>WeTypeInput</string>
+            <string>wxinput</string>
+            <string>WeChat</string>
         </array>
     </dict>
 </dict>

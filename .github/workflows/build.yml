@@ -307,6 +307,21 @@ jobs:
           assert _e["isController"] in (True, "true", "YES", "1", 1), "❌ entry.isController 不是真值"
           print(f"✅ 入口 plist entry 包裹正确（bundle={_e['bundle']} detail={_e['detail']}）")
 
+          # ---- 2d. 注入过滤清单必须含 Executables ----
+          # ⭐ v0.2.0 血泪：微信输入法键盘是 app extension，跑在独立进程；
+          #    扩展进程的 mainBundle 在不同 iOS 版本下可能是宿主/扩展/临时容器，
+          #    只靠 Filter.Bundles 会漏注入 → 用户侧表现「装了完全没反应」。
+          #    Filter.Executables（按进程名匹配）是扩展进程最可靠的一条，必须有。
+          _flt = _read_plist("Library/MobileSubstrate/DynamicLibraries/WXGlass.plist")
+          _f = _flt.get("Filter", {})
+          assert "Bundles" in _f, "❌ filter plist 缺 Filter.Bundles"
+          assert "Executables" in _f, (
+              "❌ filter plist 缺 Filter.Executables（键盘扩展进程可能注入不到）")
+          assert any("wetype" in b for b in _f["Bundles"]), (
+              f"❌ Filter.Bundles 未覆盖 wetype（实际 {_f['Bundles']}）")
+          print(f"✅ filter plist: Bundles={_f['Bundles']}")
+          print(f"✅ filter plist: Executables={_f['Executables']}")
+
           # ---- 3. dylib 切片断言：必须含 arm64e (cpusubtype 0x80000002) ----
           # ⭐ cpusubtype 必须按无符号解析（0x80000002 有符号 = -2147483646，比较永远失败）
           def has_arm64e(blob):

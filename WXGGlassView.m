@@ -57,6 +57,9 @@ static id WXGNewFilter(NSString *name) {
     CAGradientLayer *_edgeLeft;
     CAGradientLayer *_edgeRight;
     CALayer *_rim;
+
+    // ⭐ v0.2.0 诊断：一条可见色带（证明「插件确实活到了绘制这一步」）
+    CAGradientLayer *_dbgBar;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -113,6 +116,19 @@ static id WXGNewFilter(NSString *name) {
         [self.layer addSublayer:_glow];
         [self.layer addSublayer:_rim];
 
+        // ⭐ v0.2.0 诊断色带：设置里打开「诊断色带」后，键盘顶部会出现一条
+        //    渐变彩条。看到它 = 插件一路活到了「玻璃层已插入并绘制」；
+        //    看不到它 = 插件没注入 / 锚点没命中 / 宿主没找到。一眼定性。
+        _dbgBar = [CAGradientLayer layer];
+        _dbgBar.colors = @[
+            (id)[UIColor colorWithRed:1.0 green:0.2 blue:0.2 alpha:0.95].CGColor,
+            (id)[UIColor colorWithRed:1.0 green:0.8 blue:0.0 alpha:0.95].CGColor,
+            (id)[UIColor colorWithRed:0.2 green:0.9 blue:0.3 alpha:0.95].CGColor,
+        ];
+        _dbgBar.startPoint = CGPointMake(0, 0.5);
+        _dbgBar.endPoint   = CGPointMake(1, 0.5);
+        [self.layer addSublayer:_dbgBar];
+
         [self refreshAppearance];
     }
     return self;
@@ -148,6 +164,11 @@ static id WXGNewFilter(NSString *name) {
     _edgeLeft.frame   = CGRectMake(0, 0, bandW, h);
     _edgeRight.frame  = CGRectMake(w - bandW, 0, bandW, h);
     _rim.frame = CGRectInset(b, 0.5, 0.5);
+
+    // 诊断色带：贴着顶部，高 6pt
+    BOOL dbg = WXGBool(@"debugBanner", NO);
+    _dbgBar.hidden = !dbg;
+    if (dbg) _dbgBar.frame = CGRectMake(0, 0, w, 6.0);
 }
 
 // 折射量（pt）→ backdrop 外扩尺寸 + zoomBlur 强度

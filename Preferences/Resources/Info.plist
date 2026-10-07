@@ -17,9 +17,9 @@
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.2</string>
+    <string>0.2.0</string>
     <key>CFBundleVersion</key>
-    <string>0.1.2</string>
+    <string>0.2.0</string>
     <!--
       ⚠️ 必须写控制器的真实类名。
       旧值 PSListController 是抽象基类，PreferenceLoader 加载 bundle 时

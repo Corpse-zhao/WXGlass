@@ -19,7 +19,7 @@ echo "═══ WXGlass 静态预检 ═══"
 echo ""
 
 # ── 1. 打包方案 ──────────────────────────────────────────────
-echo "[1/7] 打包方案（roothide 隐根）"
+echo "[1/9] 打包方案（roothide 隐根）"
 if grep -q 'THEOS_PACKAGE_SCHEME = roothide' Makefile 2>/dev/null; then
     ok "Makefile: THEOS_PACKAGE_SCHEME = roothide"
 else
@@ -40,7 +40,7 @@ fi
 
 # ── 2. 入口 plist ────────────────────────────────────────────
 echo ""
-echo "[2/7] PreferenceLoader 入口 plist"
+echo "[2/9] PreferenceLoader 入口 plist"
 ENTRY="Preferences/WXGlassEntry.plist"
 if [ -f "$ENTRY" ]; then
     if grep -q '<key>entry</key>' "$ENTRY"; then
@@ -61,7 +61,7 @@ fi
 
 # ── 3. bundle Info.plist ─────────────────────────────────────
 echo ""
-echo "[3/7] bundle Info.plist"
+echo "[3/9] bundle Info.plist"
 # ⭐ 必须在 Resources/ 下：Theos bundle.mk 只把 Resources/* 装进 bundle，
 #    放在 Preferences/ 根目录的 Info.plist 不会进包 → NSPrincipalClass 丢失 → 入口白屏
 INFO="Preferences/Resources/Info.plist"
@@ -79,7 +79,7 @@ fi
 
 # ── 4. 版本号一致性 ─────────────────────────────────────────
 echo ""
-echo "[4/7] 版本号一致性"
+echo "[4/9] 版本号一致性"
 TV=$(grep -oE 'WXG_VERSION @"[0-9.]+"' WXGCommon.h 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
 PV=$(grep -oE 'kDLPrefsVersion = @"[0-9.]+"' Preferences/WXGlassPrefs.mm 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
 CV=$(grep -E '^Version:' control 2>/dev/null | awk '{print $2}')
@@ -89,7 +89,7 @@ if [ -n "$TV" ] && [ "$TV" = "$CV" ]; then ok "Tweak 与 control 版本一致"; 
 
 # ── 5. 反馈环防护 ───────────────────────────────────────────
 echo ""
-echo "[5/7] 反馈环防护（hook 内禁止改视图树）"
+echo "[5/9] 反馈环防护（hook 内禁止改视图树）"
 if command -v python >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then
     PY=$(command -v python3 || command -v python)
     "$PY" - <<'PYEOF'
@@ -117,7 +117,7 @@ fi
 
 # ── 6. 运行时侦查 ───────────────────────────────────────────
 echo ""
-echo "[6/7] 运行时侦查（禁止纯硬编码私有类名）"
+echo "[6/9] 运行时侦查（禁止纯硬编码私有类名）"
 if grep -q 'objc_copyClassList' WXGRecon.m 2>/dev/null; then
     ok "WXGRecon.m 含 objc_copyClassList"
 else
@@ -131,11 +131,46 @@ fi
 
 # ── 7. 触摸安全 ─────────────────────────────────────────────
 echo ""
-echo "[7/7] 触摸安全"
+echo "[7/9] 触摸安全"
 if grep -q 'userInteractionEnabled = NO' WXGGlassView.m 2>/dev/null; then
     ok "玻璃层 userInteractionEnabled = NO"
 else
     bad "玻璃层未禁用交互 → 可能挡住键盘触摸"
+fi
+
+# ── 8. 注入清单必须含 Executables（键盘扩展进程靠它命中）──────
+echo ""
+echo "[8/9] 注入清单（键盘扩展进程）"
+if grep -q 'Executables' WXGlass.plist 2>/dev/null; then
+    ok "filter plist 含 Executables（扩展进程可靠命中）"
+else
+    bad "filter plist 缺 Executables → 键盘扩展进程可能注入不到（血泪：只靠 Bundles 会漏）"
+fi
+if grep -q 'com.tencent.wetype' WXGlass.plist 2>/dev/null; then
+    ok "filter plist 含 com.tencent.wetype"
+else
+    bad "filter plist 缺 com.tencent.wetype"
+fi
+
+# ── 9. 探针必须多路径兜底（沙盒进程可能写不了 Documents）──────
+echo ""
+echo "[9/9] 探针多路径兜底"
+if grep -q 'WXGProbeCandidates' WXGCommon.m 2>/dev/null; then
+    ok "探针多路径尝试（避免沙盒写失败被误判成没注入）"
+else
+    bad "探针只有单一路径 → 沙盒写失败会与「没注入」混淆"
+fi
+if grep -q 'NSHomeDirectory' WXGCommon.m 2>/dev/null; then
+    ok "探针含沙盒兜底路径 (NSHomeDirectory)"
+else
+    bad "探针缺沙盒兜底路径"
+fi
+# 启动横幅必须在进程判定之前（否则「没注入」与「被判定滤掉」无法区分）
+if awk '/%ctor/,/^}/' Tweak.x 2>/dev/null | grep -n 'WXGLog' | head -1 \
+   | grep -q 'WXGlass.*启动'; then
+    ok "启动横幅在进程判定之前（可区分「没注入」与「被滤掉」）"
+else
+    bad "启动横幅未在进程判定之前 → 无法定位注入失败"
 fi
 
 # ── 汇总 ────────────────────────────────────────────────────

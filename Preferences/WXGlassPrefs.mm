@@ -13,7 +13,7 @@
 // ============================================================
 
 // 设置侧版本（必须与 Tweak 侧 WXG_VERSION 手工保持一致）
-static NSString * const kDLPrefsVersion = @"0.1.2";
+static NSString * const kDLPrefsVersion = @"0.2.0";
 
 static NSString * const kWXGPrefsDomain = @"com.banliren.wxglass";
 static NSString * const kWXGProbePath = @"/var/mobile/Documents/WXGlass/wxg_probe.txt";
@@ -154,7 +154,7 @@ static NSString * const kWXGProbePath = @"/var/mobile/Documents/WXGlass/wxg_prob
 
     __block NSString *found = nil;
     [probe enumerateLinesUsingBlock:^(NSString *line, BOOL *stop) {
-        // 匹配形如： WXGlass 0.1.2 启动
+        // 匹配形如： WXGlass 0.2.0 启动
         NSRange r = [line rangeOfString:@"WXGlass "];
         if (r.location == NSNotFound) return;
         NSString *rest = [line substringFromIndex:r.location + r.length];

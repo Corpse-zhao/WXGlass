@@ -27,6 +27,11 @@ static BOOL sWorkerRunning = NO;
 
 static WXGGlassView *sGlass = nil;
 
+// ⭐ v0.2.0：hook 命中计数 —— 这是判断「锚点对不对」的核心指标。
+//  0 = hook 挂在了一个系统从不调用的类上（静默死代码，血泪 §56）
+//  >0 = 锚点命中，问题在后续链路
+static volatile int32_t sHookHits = 0;
+
 #pragma mark - 工具
 
 static BOOL WXGIsKeyboardSized(UIView *v) {
@@ -123,11 +128,13 @@ static void WXGPlaceGlassInHost(UIView *host) {
     if (!sGlass) {
         sGlass = [[WXGGlassView alloc] initWithFrame:host.bounds];
         sGlass.tag = kWXGlassTag;
-        WXGLog(@"玻璃层已创建");
+        WXGLog(@"玻璃层已创建 frame=%.0fx%.0f", host.bounds.size.width, host.bounds.size.height);
     }
 
     if (sGlass.superview != host) {
         [host insertSubview:sGlass atIndex:0];
+        WXGLog(@"玻璃层已插入 host=%@ subviews=%lu",
+               NSStringFromClass([host class]), (unsigned long)host.subviews.count);
     }
 
     sGlass.frame = host.bounds;
@@ -184,6 +191,31 @@ static void WXGRefresh(void) {
 
 static void WXGWorkerTick(void);
 
+// ⭐ v0.2.0 心跳：每 2s 写一行，附带当前状态。
+//  作用：把「插件死了」和「插件活着但没找到宿主」区分开。
+//  若探针里只有启动横幅、没有任何 HB 行 → worker 没跑起来（注入不完整）。
+//  若 HB 一直打但 host=nil → 注入正常，是**锚点没命中**（hook 打在错的类上）。
+static void WXGStartHeartbeat(void) {
+    dispatch_source_t t = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
+                                                 dispatch_get_main_queue());
+    dispatch_source_set_timer(t,
+                              dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
+                              (uint64_t)(2.0 * NSEC_PER_SEC),
+                              (uint64_t)(0.1 * NSEC_PER_SEC));
+    dispatch_source_set_event_handler(t, ^{
+        @autoreleasepool {
+            UIView *h = sSeenHost;
+            WXGLog(@"HB alive | host=%@ size=%.0fx%.0f glass=%@ hbCount=%ld",
+                   h ? NSStringFromClass([h class]) : @"nil",
+                   h ? h.frame.size.width : 0.0,
+                   h ? h.frame.size.height : 0.0,
+                   sGlass ? (sGlass.hidden ? @"hidden" : @"visible") : @"nil",
+                   (long)sHookHits);
+        }
+    });
+    dispatch_resume(t);
+}
+
 static void WXGStartWorker(void) {
     if (sWorkerRunning) return;
     sWorkerRunning = YES;
@@ -223,15 +255,29 @@ static void WXGWorkerTick(void) {
 
 %ctor {
     @autoreleasepool {
-        WXGLog(@"========== WXGlass %@ 启动（WXG_VERSION）==========", WXG_VERSION);
+        // ⭐⭐ v0.2.0 铁律：本条日志必须在**任何** 进程判定/开关之前写。
+        //  它是「插件有没有被注入到这个进程」的唯一证据。
+        //  以前先判进程、不命中就 return，导致「没注入」和「注入了但被判定滤掉」
+        //  在探针里长得一模一样 —— 完全无法定位。
+        WXGLog(@"========== WXGlass %@ 启动 ==========", WXG_VERSION);
+        WXGLog(@"bundleID   = %@", WXGBundleIDString());
+        WXGLog(@"process    = %@ (pid=%d)", WXGProcessName(), (int)getpid());
+        WXGLog(@"exePath    = %@", [[NSBundle mainBundle] executablePath] ?: @"?");
+        WXGLog(@"processHit = %d (1=判定为微信系)", WXGIsWeChatProcess() ? 1 : 0);
+        WXGLog(@"enabled=%d forceAll=%d",
+               WXGBool(@"enabled", YES) ? 1 : 0, WXGBool(@"forceAll", NO) ? 1 : 0);
 
-        if (!WXGIsWeChatProcess()) {
-            WXGLog(@"当前进程不是微信/微信输入法 → 不干预");
+        if (!WXGShouldIntervene()) {
+            WXGLog(@"⚠️ 不介入：%s", (!WXGBool(@"enabled", YES))
+                   ? "总开关关闭(enabled=NO)"
+                   : "进程未命中且 forceAll=NO —— 若确认本进程就是输入法，请在设置里打开「强制启用」");
             return;
         }
+        WXGLog(@"已介入：%@（forceAll=%d）", WXGProcessName(), WXGBool(@"forceAll", NO) ? 1 : 0);
 
-        WXGLog(@"已注入微信系进程：%@", WXGProcessName());
         WXGStartWorker();
+        // 心跳：每 2s 打一行，证明确实活着（也便于看 worker 有没有跑起来）
+        WXGStartHeartbeat();
 
         // 延后侦查：构造器阶段类可能还没注册齐
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
@@ -268,11 +314,13 @@ static void WXGWorkerTick(void) {
 %hook UIInputSetHostView
 - (void)layoutSubviews {
     %orig;
-    if (!WXGIsWeChatProcess()) return;
-    if (!WXGBool(@"enabled", YES)) return;
+    if (!WXGShouldIntervene()) return;
     // ⚠️ 只记弱引用 + 置脏标记，零视图操作
     sSeenHost = self;
     sDirty = YES;
+    if (sHookHits++ == 0) {
+        WXGLog(@"🎯 锚点①命中 UIInputSetHostView layoutSubviews（首个 hook 生效！）");
+    }
 }
 %end
 
@@ -285,11 +333,13 @@ static void WXGWorkerTick(void) {
 %hook UIInputWindowController
 - (void)viewDidLayoutSubviews {
     %orig;
-    if (!WXGIsWeChatProcess()) return;
-    if (!WXGBool(@"enabled", YES)) return;
+    if (!WXGShouldIntervene()) return;
     UIView *host = self.view;
     if (host && WXGIsKeyboardSized(host)) sSeenHost = host;
     sDirty = YES;
+    if (sHookHits++ == 0) {
+        WXGLog(@"🎯 锚点②命中 UIInputWindowController viewDidLayoutSubviews");
+    }
 }
 %end
 
@@ -310,7 +360,7 @@ static void WXGWorkerTick(void) {
 // ============================================================
 %hook WBMainInputView
 - (void)setBackgroundColor:(UIColor *)color {
-    if (WXGIsWeChatProcess() && WXGBool(@"enabled", YES)) {
+    if (WXGShouldIntervene()) {
         CGFloat r = 0, g = 0, b = 0, a = 0;
         if (color && [color getRed:&r green:&g blue:&b alpha:&a]) {
             // 只拦「不透明」背景（alpha>0.95）；本身就是透明的设置放行
@@ -325,10 +375,12 @@ static void WXGWorkerTick(void) {
 
 - (void)layoutSubviews {
     %orig;
-    if (!WXGIsWeChatProcess()) return;
-    if (!WXGBool(@"enabled", YES)) return;
+    if (!WXGShouldIntervene()) return;
     // ⭐ Logos 生成的接口无父类声明，self 赋 UIView* 需显式强转（-Werror）
     sSeenHost = (UIView *)self;
     sDirty = YES;
+    if (sHookHits++ == 0) {
+        WXGLog(@"🎯 锚点③命中 WBMainInputView layoutSubviews（微信输入法自有类）");
+    }
 }
 %end
