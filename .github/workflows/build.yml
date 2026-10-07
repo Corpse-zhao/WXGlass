@@ -1,0 +1,51 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout tweak
+        uses: actions/checkout@v4
+        with:
+          path: tweak
+
+      - name: Clone roothide theos
+        run: |
+          git clone --recursive https://github.com/roothide/theos.git theos
+
+      - name: Setup SDK (iPhoneOS16.5)
+        run: |
+          git clone --filter=blob:none --sparse https://github.com/theos/sdks.git sdks
+          cd sdks
+          git sparse-checkout set iPhoneOS16.5.sdk
+          git lfs pull
+
+      - name: Download iOS cross toolchain
+        run: |
+          curl -L https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-x86_64.tar.xz -o tc.tar.xz
+          mkdir -p theos/toolchain
+          tar -xJf tc.tar.xz -C theos/toolchain
+
+      - name: Download ldid
+        run: |
+          curl -L https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_linux_x86_64 -o theos/bin/ldid
+          chmod +x theos/bin/ldid
+
+      - name: Build deb
+        run: |
+          export THEOS=$PWD/theos
+          export THEOS_SDK_DIR=$PWD/sdks
+          cd tweak
+          make clean
+          make package FINALPACKAGE=1
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: tweak/packages/*.deb

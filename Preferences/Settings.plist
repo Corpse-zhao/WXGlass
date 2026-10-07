@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>items</key>
+    <array>
+        <dict>
+            <key>cell</key><string>PSGroupCell</string>
+            <key>label</key><string>液态玻璃(WXGlass)</string>
+        </dict>
+        <dict>
+            <key>cell</key><string>PSSwitchCell</string>
+            <key>default</key><true/>
+            <key>defaults</key><string>com.banliren.wxglass</string>
+            <key>key</key><string>enabled</string>
+            <key>label</key><string>启用</string>
+        </dict>
+        <dict>
+            <key>cell</key><string>PSSliderCell</string>
+            <key>default</key><real>20</real>
+            <key>defaults</key><string>com.banliren.wxglass</string>
+            <key>key</key><string>blurRadius</string>
+            <key>label</key><string>模糊强度</string>
+            <key>min</key><real>0</real>
+            <key>max</key><real>60</real>
+            <key>showValue</key><true/>
+        </dict>
+        <dict>
+            <key>cell</key><string>PSSliderCell</string>
+            <key>default</key><real>1.0</real>
+            <key>defaults</key><string>com.banliren.wxglass</string>
+            <key>key</key><string>edgeRefraction</string>
+            <key>label</key><string>边缘折射</string>
+            <key>min</key><real>0</real>
+            <key>max</key><real>2.0</real>
+            <key>showValue</key><true/>
+        </dict>
+        <dict>
+            <key>cell</key><string>PSSliderCell</string>
+            <key>default</key><real>0.6</real>
+            <key>defaults</key><string>com.banliren.wxglass</string>
+            <key>key</key><string>glowStrength</string>
+            <key>label</key><string>高光强度</string>
+            <key>min</key><real>0</real>
+            <key>max</key><real>1.0</real>
+            <key>showValue</key><true/>
+        </dict>
+        <dict>
+            <key>cell</key><string>PSSliderCell</string>
+            <key>default</key><real>0.35</real>
+            <key>defaults</key><string>com.banliren.wxglass</string>
+            <key>key</key><string>baseColor</string>
+            <key>label</key><string>底色浓度</string>
+            <key>min</key><real>0</real>
+            <key>max</key><real>1.0</real>
+            <key>showValue</key><true/>
+        </dict>
+    </array>
+</dict>
+</plist>

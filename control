@@ -1,0 +1,9 @@
+Package: com.banliren.wxglass
+Name: WXGlass 液态玻璃键盘
+Depends: mobilesubstrate
+Version: 0.0.1
+Architecture: iphoneos-arm64
+Description: 模仿 GlassSuiteX 的液态玻璃效果,应用到微信输入法。含模糊/折射/高光/底色四参数设置。
+Maintainer: 板栗仁
+Author: 板栗仁
+Section: Tweaks

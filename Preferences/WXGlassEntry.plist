@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>items</key>
+    <array>
+        <dict>
+            <key>cell</key>
+            <string>PSLinkCell</string>
+            <key>label</key>
+            <string>WXGlass 液态玻璃键盘</string>
+            <key>detail</key>
+            <string>WXGlassPrefsListController</string>
+            <key>bundle</key>
+            <string>WXGlassPrefs</string>
+        </dict>
+    </array>
+</dict>
+</plist>
