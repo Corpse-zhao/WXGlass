@@ -154,7 +154,7 @@ static NSString * const kWXGProbePath = @"/var/mobile/Documents/WXGlass/wxg_prob
 
     __block NSString *found = nil;
     [probe enumerateLinesUsingBlock:^(NSString *line, BOOL *stop) {
-        // 匹配形如： WXGlass 0.1.0 启动
+        // 匹配形如： WXGlass 0.1.1 启动
         NSRange r = [line rangeOfString:@"WXGlass "];
         if (r.location == NSNotFound) return;
         NSString *rest = [line substringFromIndex:r.location + r.length];

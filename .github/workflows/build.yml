@@ -89,7 +89,14 @@ jobs:
           [ -n "$T" ] || { echo "❌ 没取到 WXG_VERSION"; exit 1; }
           [ "$T" = "$P" ] || { echo "❌ WXGCommon.h 与设置侧版本不一致（版本自检会误报）"; exit 1; }
           [ "$T" = "$C" ] || { echo "❌ control 版本与源码版本不一致"; exit 1; }
-          echo "✅ 三处版本一致：$T"
+          # ⭐ bundle Info.plist 也必须同步（决定设置里显示的版本）
+          I=$(grep -A1 'CFBundleShortVersionString' Preferences/Info.plist | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          echo "Info.plist=$I"
+          [ "$T" = "$I" ] || { echo "❌ Preferences/Info.plist 版本与源码不一致"; exit 1; }
+          # ⭐ CI 自身不许硬编码版本号（历史坑：升版后 Verify 假红）
+          ! grep -qE 'Version: [0-9]+\.[0-9]+\.[0-9]+"' .github/workflows/build.yml \
+            || { echo "❌ build.yml 里硬编码了版本号，应从 WXGCommon.h 推导"; exit 1; }
+          echo "✅ 四处版本一致：$T"
 
       - name: Lint 禁止在 layoutSubviews 里改视图树（反馈环）
         run: |
@@ -208,8 +215,14 @@ jobs:
           ctrl_text = ctrl.decode()
           print("--- control ---"); print(ctrl_text)
           assert "Architecture: iphoneos-arm64e" in ctrl_text, "❌ 架构不是 iphoneos-arm64e"
-          assert "Version: 0.1.0" in ctrl_text, "❌ 版本不是 0.1.0"
-          print("✅ Architecture: iphoneos-arm64e / Version: 0.1.0")
+          # ⭐ 版本从源码单一来源推导，禁止硬编码（否则每次升版 CI 假红）
+          import re as _re
+          _h = open("tweak/WXGCommon.h", encoding="utf-8").read()
+          m = _re.search(r'WXG_VERSION\s+@"([0-9.]+)"', _h)
+          assert m, "❌ 没从 WXGCommon.h 取到 WXG_VERSION"
+          want_ver = m.group(1)
+          assert f"Version: {want_ver}" in ctrl_text, f"❌ deb 版本不是 {want_ver}（期望与源码一致）"
+          print(f"✅ Architecture: iphoneos-arm64e / Version: {want_ver}")
 
           # ---- 2. data: 布局断言 ----
           data_name = next(n for n in members if n.startswith("data.tar"))
