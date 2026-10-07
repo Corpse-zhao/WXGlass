@@ -4,8 +4,6 @@ TWEAK_NAME = WXGlass
 WXGlass_FILES = Tweak.x
 WXGlass_CFLAGS = -fobjc-arc
 
-ADDITIONAL_CFLAGS = -std=c++11
-
 include $(THEOS_MAKE_PATH)/tweak.mk
 
 ifeq ($(SIMULATOR),1)
