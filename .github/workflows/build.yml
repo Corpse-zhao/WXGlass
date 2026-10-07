@@ -3,49 +3,214 @@ name: build
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-  build:
+  # ────────────────────────────────────────────────────────────
+  #  Stage 1：静态自检（在 Linux 上跑，秒级完成，拦住低级错误）
+  # ────────────────────────────────────────────────────────────
+  lint:
     runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
+      - name: Lint 打包方案与架构字段
+        run: |
+          set -e
+          echo "── Makefile 必须用 roothide 方案 ──"
+          grep -q 'THEOS_PACKAGE_SCHEME = roothide' Makefile \
+            || { echo "❌ Makefile 缺少 THEOS_PACKAGE_SCHEME = roothide"; exit 1; }
+
+          echo "── control 架构必须是 iphoneos-arm64e ──"
+          grep -q '^Architecture: iphoneos-arm64e' control \
+            || { echo "❌ control 的 Architecture 不是 iphoneos-arm64e（roothide 设备会拒装）"; exit 1; }
+
+          echo "── 双切片 ──"
+          grep -q 'ARCHS = arm64 arm64e' Makefile \
+            || { echo "❌ Makefile 必须 ARCHS = arm64 arm64e"; exit 1; }
+
+      - name: Lint PreferenceLoader 入口 plist（entry 包裹）
+        run: |
+          set -e
+          PLIST=Preferences/WXGlassEntry.plist
+          echo "── $PLIST 必须含 <key>entry</key> ──"
+          grep -q '<key>entry</key>' "$PLIST" \
+            || { echo "❌ 入口 plist 缺少 entry 包裹 → PreferenceLoader 会静默跳过，设置里没有入口"; exit 1; }
+
+          for k in bundle cell detail isController label; do
+            grep -q "<key>$k</key>" "$PLIST" \
+              || { echo "❌ entry 内缺少键：$k"; exit 1; }
+          done
+
+          echo "── entry 必须包在 dict 内（不能被摊平） ──"
+          python3 - <<'PY'
+          import plistlib, sys
+          with open("Preferences/WXGlassEntry.plist","rb") as f:
+              d = plistlib.load(f)
+          if "entry" not in d:
+              print("❌ 顶层没有 entry 键")
+              sys.exit(1)
+          e = d["entry"]
+          for k in ("bundle","cell","detail","isController","label"):
+              if k not in e:
+                  print(f"❌ entry 内缺少 {k}")
+                  sys.exit(1)
+          if e.get("detail") != "WXGlassPrefsListController":
+              print("❌ entry.detail 必须是 WXGlassPrefsListController")
+              sys.exit(1)
+          print("✅ 入口 plist 结构正确")
+          PY
+
+      - name: Lint bundle Info.plist（NSPrincipalClass）
+        run: |
+          set -e
+          python3 - <<'PY'
+          import plistlib, sys
+          with open("Preferences/Info.plist","rb") as f:
+              d = plistlib.load(f)
+          pc = d.get("NSPrincipalClass","")
+          if pc in ("", "PSListController"):
+              print(f"❌ NSPrincipalClass 必须是控制器真实类名，当前='{pc}'")
+              sys.exit(1)
+          if pc != "WXGlassPrefsListController":
+              print(f"❌ NSPrincipalClass 应为 WXGlassPrefsListController，当前='{pc}'")
+              sys.exit(1)
+          print(f"✅ NSPrincipalClass = {pc}")
+          PY
+
+      - name: Lint 版本号一致性（Tweak / Prefs / control）
+        run: |
+          set -e
+          T=$(grep -oE 'WXG_VERSION @"[0-9.]+"' WXGCommon.h | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          P=$(grep -oE 'kDLPrefsVersion = @"[0-9.]+"' Preferences/WXGlassPrefs.mm | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          C=$(grep -E '^Version:' control | head -1 | awk '{print $2}')
+          echo "Tweak=$T  Prefs=$P  control=$C"
+          [ -n "$T" ] || { echo "❌ 没取到 WXG_VERSION"; exit 1; }
+          [ "$T" = "$P" ] || { echo "❌ WXGCommon.h 与设置侧版本不一致（版本自检会误报）"; exit 1; }
+          [ "$T" = "$C" ] || { echo "❌ control 版本与源码版本不一致"; exit 1; }
+          echo "✅ 三处版本一致：$T"
+
+      - name: Lint 禁止在 layoutSubviews 里改视图树（反馈环）
+        run: |
+          set -e
+          # 提取三个 %hook 块，禁止其中出现 insertSubview / addSubview
+          python3 - <<'PY'
+          import re, sys
+          src = open("Tweak.x", encoding="utf-8").read()
+          blocks = re.findall(r'%hook\s+\w+(.*?)%end', src, re.S)
+          bad = False
+          for b in blocks:
+              for m in ("insertSubview", "addSubview", "removeFromSuperview"):
+                  if m in b:
+                      print(f"❌ hook 块内出现 {m}（必须在稳定态 worker 里做，否则触发 layout 反馈环）")
+                      bad = True
+          if bad:
+              sys.exit(1)
+          print(f"✅ {len(blocks)} 个 hook 块均未在布局回调内改视图树")
+          PY
+
+      - name: Lint 必须存在运行时侦查（禁止纯硬编码私有类名）
+        run: |
+          set -e
+          grep -q 'objc_copyClassList' WXGRecon.m \
+            || { echo "❌ 缺少 objc_copyClassList 运行时侦查"; exit 1; }
+          grep -q 'WXGReconCheckCandidates' Tweak.x \
+            || { echo "❌ %ctor 里必须调用 WXGReconCheckCandidates（否则无从知道钩子挂没挂上）"; exit 1; }
+          echo "✅ 运行时侦查齐备"
+
+      - name: Lint 玻璃层必须 userInteractionEnabled = NO
+        run: |
+          set -e
+          grep -q 'userInteractionEnabled = NO' WXGGlassView.m \
+            || { echo "❌ 玻璃层必须 userInteractionEnabled = NO（否则可能挡住键盘触摸）"; exit 1; }
+          echo "✅ 触摸安全"
+
+  # ────────────────────────────────────────────────────────────
+  #  Stage 2：macOS 真编译（arm64e 必须 Apple 原生 clang+ld64）
+  # ────────────────────────────────────────────────────────────
+  build:
+    needs: lint
+    runs-on: macos-14
     steps:
       - name: Checkout tweak
         uses: actions/checkout@v4
         with:
           path: tweak
 
-      - name: Clone roothide theos
+      - name: Install build deps
         run: |
-          git clone --recursive https://github.com/roothide/theos.git theos
+          brew install make xz ldid dpkg 2>/dev/null || brew install make xz ldid
 
-      - name: Setup SDK (iPhoneOS16.5)
+      - name: Clone roothide theos（必须这个分支才有 roothide scheme）
+        run: |
+          git clone --recursive --depth 1 https://github.com/roothide/theos.git theos
+          echo "THEOS=$PWD/theos" >> $GITHUB_ENV
+          echo "$PWD/theos/bin" >> $GITHUB_PATH
+
+      - name: Verify roothide scheme exists
+        run: |
+          set -e
+          test -f "$THEOS/makefiles/package/roothide.mk" \
+            || { echo "❌ roothide.mk 不存在 —— theos 分支不对，必须 roothide/theos"; exit 1; }
+          echo "✅ roothide scheme 就位"
+
+      - name: Download SDK (iPhoneOS16.5)
         run: |
           git clone --filter=blob:none --sparse https://github.com/theos/sdks.git sdksrc
           cd sdksrc
           git sparse-checkout set iPhoneOS16.5.sdk
-          git lfs pull
-          cp -r iPhoneOS16.5.sdk $GITHUB_WORKSPACE/theos/sdks/
-
-      - name: Download iOS cross toolchain
-        run: |
-          curl -L https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-x86_64.tar.xz -o tc.tar.xz
-          mkdir -p theos/toolchain
-          tar -xJf tc.tar.xz -C theos/toolchain
-
-      - name: Download ldid
-        run: |
-          curl -L https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_linux_x86_64 -o theos/bin/ldid
-          chmod +x theos/bin/ldid
+          cp -R iPhoneOS16.5.sdk "$THEOS/sdks/"
 
       - name: Build deb
         run: |
-          export THEOS=$PWD/theos
+          set -euo pipefail
           cd tweak
-          make clean
-          make package FINALPACKAGE=1
+          make clean || true
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide 2>&1
+          ls -la packages/
+
+      - name: Verify deb (架构字段 + 内部布局)
+        run: |
+          set -euo pipefail
+          DEB=$(ls tweak/packages/*.deb | head -1)
+          echo "deb = $DEB"
+          dpkg-deb -I "$DEB" | tee /tmp/deb.info
+
+          echo "── 断言 Architecture: iphoneos-arm64e ──"
+          grep -q 'Architecture: iphoneos-arm64e' /tmp/deb.info \
+            || { echo "❌ 产物架构不是 iphoneos-arm64e"; exit 1; }
+
+          echo "── 断言入口 plist 在包内 ──"
+          dpkg-deb -c "$DEB" | tee /tmp/deb.list
+          grep -q 'PreferenceLoader/Preferences/WXGlass.plist' /tmp/deb.list \
+            || { echo "❌ 包内没有 PreferenceLoader 入口 plist"; exit 1; }
+
+          echo "── 断言 bundle 二进制在包内 ──"
+          grep -q 'PreferenceBundles/WXGlassPrefs.bundle/WXGlassPrefs' /tmp/deb.list \
+            || { echo "❌ 包内没有 WXGlassPrefs bundle 二进制"; exit 1; }
+
+          echo "── 断言 tweak dylib 在包内 ──"
+          grep -qE 'MobileSubstrate/DynamicLibraries/WXGlass.dylib' /tmp/deb.list \
+            || { echo "❌ 包内没有 tweak dylib"; exit 1; }
+
+          echo "✅ deb 结构校验全部通过"
+
+      - name: Verify dylib 是真 arm64e 切片
+        run: |
+          set -euo pipefail
+          DEB=$(ls tweak/packages/*.deb | head -1)
+          rm -rf /tmp/x && mkdir -p /tmp/x
+          dpkg-deb -x "$DEB" /tmp/x
+          DYL=$(find /tmp/x -name 'WXGlass.dylib' | head -1)
+          echo "dylib = $DYL"
+          lipo -info "$DYL" | tee /tmp/lipo.txt
+          grep -q 'arm64e' /tmp/lipo.txt || { echo "❌ dylib 缺 arm64e 切片"; exit 1; }
+          echo "✅ dylib 含 arm64e"
 
       - name: Upload deb
         uses: actions/upload-artifact@v4
         with:
-          name: deb
+          name: wxglass-deb
           path: tweak/packages/*.deb
+          if-no-files-found: error

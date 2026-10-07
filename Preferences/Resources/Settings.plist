@@ -6,7 +6,8 @@
     <array>
         <dict>
             <key>cell</key><string>PSGroupCell</string>
-            <key>label</key><string>液态玻璃(WXGlass)</string>
+            <key>label</key><string>液态玻璃 (WXGlass)</string>
+            <key>footerText</key><string>玻璃层不接收触摸，从机制上不会影响键盘操作。参数对标 GlassSuiteX；改动后收起再呼出键盘生效。</string>
         </dict>
         <dict>
             <key>cell</key><string>PSSwitchCell</string>
@@ -15,24 +16,29 @@
             <key>key</key><string>enabled</string>
             <key>label</key><string>启用</string>
         </dict>
+
+        <dict>
+            <key>cell</key><string>PSGroupCell</string>
+            <key>label</key><string>外观参数</string>
+        </dict>
         <dict>
             <key>cell</key><string>PSSliderCell</string>
             <key>default</key><real>20</real>
             <key>defaults</key><string>com.banliren.wxglass</string>
             <key>key</key><string>blurRadius</string>
-            <key>label</key><string>模糊强度</string>
+            <key>label</key><string>模糊强度 (pt)</string>
             <key>min</key><real>0</real>
             <key>max</key><real>60</real>
             <key>showValue</key><true/>
         </dict>
         <dict>
             <key>cell</key><string>PSSliderCell</string>
-            <key>default</key><real>1.0</real>
+            <key>default</key><real>12</real>
             <key>defaults</key><string>com.banliren.wxglass</string>
             <key>key</key><string>edgeRefraction</string>
-            <key>label</key><string>边缘折射</string>
+            <key>label</key><string>边缘折射 (pt)</string>
             <key>min</key><real>0</real>
-            <key>max</key><real>2.0</real>
+            <key>max</key><real>30</real>
             <key>showValue</key><true/>
         </dict>
         <dict>
@@ -47,13 +53,25 @@
         </dict>
         <dict>
             <key>cell</key><string>PSSliderCell</string>
-            <key>default</key><real>0.35</real>
+            <key>default</key><real>0.25</real>
             <key>defaults</key><string>com.banliren.wxglass</string>
             <key>key</key><string>baseColor</string>
             <key>label</key><string>底色浓度</string>
             <key>min</key><real>0</real>
             <key>max</key><real>1.0</real>
             <key>showValue</key><true/>
+        </dict>
+
+        <dict>
+            <key>cell</key><string>PSGroupCell</string>
+            <key>label</key><string>诊断</string>
+            <key>footerText</key><string>若「键盘进程版本」为空或不一致，说明插件本体没加载到键盘进程。探针文件：/var/mobile/Documents/WXGlass/wxg_probe.txt</string>
+        </dict>
+        <dict>
+            <key>cell</key><string>PSLinkCell</string>
+            <key>label</key><string>运行状态自检</string>
+            <key>detail</key><string>WXGlassDiagController</string>
+            <key>isController</key><true/>
         </dict>
     </array>
 </dict>

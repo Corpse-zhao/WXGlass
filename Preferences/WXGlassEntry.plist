@@ -2,18 +2,26 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>items</key>
-    <array>
-        <dict>
-            <key>cell</key>
-            <string>PSLinkCell</string>
-            <key>label</key>
-            <string>WXGlass 液态玻璃键盘</string>
-            <key>detail</key>
-            <string>WXGlassPrefsListController</string>
-            <key>bundle</key>
-            <string>WXGlassPrefs</string>
-        </dict>
-    </array>
+    <!--
+      ⚠️⚠️ 铁律：PreferenceLoader 只认「entry 包裹」结构。
+      把这个 dict 直接摊平（只有 items 数组）会被 PreferenceLoader
+      静默跳过 —— Sileo 显示已装，但设置里永远没有入口。
+      键名是 detail（不是 entryControllerClass），且必须在 entry 内。
+    -->
+    <key>entry</key>
+    <dict>
+        <key>bundle</key>
+        <string>WXGlassPrefs</string>
+        <key>cell</key>
+        <string>PSLinkCell</string>
+        <key>detail</key>
+        <string>WXGlassPrefsListController</string>
+        <key>icon</key>
+        <string>WXGlassPrefs</string>
+        <key>isController</key>
+        <true/>
+        <key>label</key>
+        <string>WXGlass 液态玻璃键盘</string>
+    </dict>
 </dict>
 </plist>

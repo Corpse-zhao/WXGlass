@@ -17,10 +17,15 @@
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.0.1</string>
+    <string>0.1.0</string>
     <key>CFBundleVersion</key>
-    <string>0.0.1</string>
+    <string>0.1.0</string>
+    <!--
+      ⚠️ 必须写控制器的真实类名。
+      旧值 PSListController 是抽象基类，PreferenceLoader 加载 bundle 时
+      拿不到可用控制器 → 点击入口白屏/闪退。
+    -->
     <key>NSPrincipalClass</key>
-    <string>PSListController</string>
+    <string>WXGlassPrefsListController</string>
 </dict>
 </plist>
