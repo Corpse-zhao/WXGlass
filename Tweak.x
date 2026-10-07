@@ -1,7 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 
-// ---------- 设置读取 ----------
+// ---------- 设置读取(偏好域 com.banliren.wxglass) ----------
 static CGFloat PFCGFloat(NSString *key, CGFloat def) {
     CFNumberRef n = CFPreferencesCopyAppValue((__bridge CFStringRef)key, CFSTR("com.banliren.wxglass"));
     CGFloat v = def;
@@ -15,74 +15,75 @@ static BOOL PFBool(NSString *key, BOOL def) {
     return v;
 }
 
-// ---------- 液态玻璃视图 ----------
+static const NSInteger kWXGlassTag = 0x57161;
+
+// ---------- 高光玻璃层(液态玻璃:半透明基底 + 顶部高光 + 边缘折射) ----------
 @interface WXGlassView : UIView
 @end
 
 @implementation WXGlassView
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
-        CGFloat base = PFCGFloat(@"baseColor", 0.25);      // 底色浓度
-        CGFloat blurR = PFCGFloat(@"blurRadius", 20.0);    // 模糊强度
-        CGFloat glow  = PFCGFloat(@"glowStrength", 0.55);  // 高光强度
-        CGFloat edge  = PFCGFloat(@"edgeRefraction", 1.0); // 边缘折射
+        CGFloat glow = PFCGFloat(@"glowStrength", 0.55);    // 高光强度
+        CGFloat edge = PFCGFloat(@"edgeRefraction", 1.0);   // 边缘折射
 
-        // 半透明磨砂基底
-        self.backgroundColor = [UIColor colorWithWhite:0.14 alpha:base];
-        self.layer.cornerRadius = 16;
-        self.clipsToBounds = YES;
+        self.backgroundColor = [UIColor clearColor];
+        self.userInteractionEnabled = NO;
 
-        // 模糊层(键盘扩展沙盒下可能受限,尽力而为)
-        if (blurR > 0.5) {
-            UIBlurEffect *effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleLight];
-            UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:effect];
-            blur.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-            blur.frame = self.bounds;
-            [self addSubview:blur];
-        }
+        // 顶部高光渐变(玻璃反光)
+        CAGradientLayer *grad = [CAGradientLayer layer];
+        grad.frame = CGRectMake(0, 0, frame.size.width, frame.size.height * 0.5);
+        grad.colors = @[
+            (id)[[UIColor colorWithWhite:1.0 alpha:glow * 0.45] CGColor],
+            (id)[[UIColor colorWithWhite:1.0 alpha:0.0] CGColor]
+        ];
+        grad.locations = @[@0.0, @1.0];
+        [self.layer addSublayer:grad];
 
-        // 高光:顶部渐变
-        if (glow > 0.01) {
-            CAGradientLayer *grad = [CAGradientLayer layer];
-            grad.frame = CGRectMake(0, 0, frame.size.width, frame.size.height * 0.45);
-            grad.colors = @[
-                (id)[[UIColor colorWithWhite:1.0 alpha:glow * 0.5] CGColor],
-                (id)[[UIColor colorWithWhite:1.0 alpha:0.0] CGColor]
-            ];
-            grad.locations = @[@0.0, @1.0];
-            [self.layer addSublayer:grad];
-        }
-
-        // 边缘折射:描边
+        // 边缘折射:白色细描边
         if (edge > 0.01) {
             self.layer.borderWidth = 1.0;
-            self.layer.borderColor = [[UIColor colorWithWhite:1.0 alpha:0.26 * edge] CGColor];
+            self.layer.borderColor = [[UIColor colorWithWhite:1.0 alpha:0.28 * edge] CGColor];
         }
     }
     return self;
 }
 @end
 
-static void WXApplyToView(UIView *v) {
-    if (!v) return;
-    WXGlassView *glass = [[WXGlassView alloc] initWithFrame:v.bounds];
-    glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    glass.userInteractionEnabled = NO;
-    [v addSubview:glass];
-}
-
-// ---------- Hook 键盘 ----------
-%hook UIInputViewController
-- (void)viewDidLoad {
+// ---------- Hook 微信输入法键盘主视图(WBMainInputView) ----------
+// 注入目标与 KBStyle 一致:Filter=com.apple.UIKit,该类只存在于微信键盘进程,其他 App 无此 Class 自动跳过
+%hook WBMainInputView
+- (void)layoutSubviews {
     %orig;
     if (!PFBool(@"enabled", YES)) return;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        @try {
-            WXApplyToView(self.view);
-            NSLog(@"[WXGlass] keyboard glass applied to %@", self);
-        } @catch (NSException *e) {
-            NSLog(@"[WXGlass] caught: %@", e);
+    @try {
+        CGFloat base = PFCGFloat(@"baseColor", 0.25); // 底色浓度 = 半透明 alpha
+        self.backgroundColor = [UIColor colorWithWhite:0.08 alpha:base];
+
+        WXGlassView *glass = (WXGlassView *)[self viewWithTag:kWXGlassTag];
+        if (!glass) {
+            glass = [[WXGlassView alloc] initWithFrame:self.bounds];
+            glass.tag = kWXGlassTag;
+            [self insertSubview:glass atIndex:0];
         }
-    });
+        glass.frame = self.bounds;
+        NSLog(@"[WXGlass] glass applied to WBMainInputView (%@)", NSStringFromClass(self.class));
+    } @catch (NSException *e) {
+        NSLog(@"[WXGlass] caught: %@", e);
+    }
+}
+%end
+
+// ---------- 键盘 Dock(仿 KBStyle,仅该类存在时生效) ----------
+%hook UIKeyboardDockView
+- (void)layoutSubviews {
+    %orig;
+    if (!PFBool(@"enabled", YES)) return;
+    @try {
+        CGFloat base = PFCGFloat(@"baseColor", 0.25);
+        self.backgroundColor = [UIColor colorWithWhite:0.08 alpha:base];
+    } @catch (NSException *e) {
+        NSLog(@"[WXGlass] dock caught: %@", e);
+    }
 }
 %end
