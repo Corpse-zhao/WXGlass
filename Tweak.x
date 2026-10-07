@@ -57,17 +57,18 @@ static const NSInteger kWXGlassTag = 0x57161;
     %orig;
     if (!PFBool(@"enabled", YES)) return;
     @try {
+        UIView *v = (UIView *)self; // 私有类无头文件,按 UIView 处理
         CGFloat base = PFCGFloat(@"baseColor", 0.25); // 底色浓度 = 半透明 alpha
-        self.backgroundColor = [UIColor colorWithWhite:0.08 alpha:base];
+        v.backgroundColor = [UIColor colorWithWhite:0.08 alpha:base];
 
-        WXGlassView *glass = (WXGlassView *)[self viewWithTag:kWXGlassTag];
+        WXGlassView *glass = (WXGlassView *)[v viewWithTag:kWXGlassTag];
         if (!glass) {
-            glass = [[WXGlassView alloc] initWithFrame:self.bounds];
+            glass = [[WXGlassView alloc] initWithFrame:v.bounds];
             glass.tag = kWXGlassTag;
-            [self insertSubview:glass atIndex:0];
+            [v insertSubview:glass atIndex:0];
         }
-        glass.frame = self.bounds;
-        NSLog(@"[WXGlass] glass applied to WBMainInputView (%@)", NSStringFromClass(self.class));
+        glass.frame = v.bounds;
+        NSLog(@"[WXGlass] glass applied to WBMainInputView (%@)", NSStringFromClass([self class]));
     } @catch (NSException *e) {
         NSLog(@"[WXGlass] caught: %@", e);
     }
@@ -80,8 +81,9 @@ static const NSInteger kWXGlassTag = 0x57161;
     %orig;
     if (!PFBool(@"enabled", YES)) return;
     @try {
+        UIView *v = (UIView *)self;
         CGFloat base = PFCGFloat(@"baseColor", 0.25);
-        self.backgroundColor = [UIColor colorWithWhite:0.08 alpha:base];
+        v.backgroundColor = [UIColor colorWithWhite:0.08 alpha:base];
     } @catch (NSException *e) {
         NSLog(@"[WXGlass] dock caught: %@", e);
     }
