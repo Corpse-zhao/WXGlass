@@ -27,10 +27,21 @@ static BOOL sWorkerRunning = NO;
 
 static WXGGlassView *sGlass = nil;
 
-// ⭐ v0.2.0：hook 命中计数 —— 这是判断「锚点对不对」的核心指标。
+// ⭐ v0.2.1：hook 命中计数 —— 这是判断「锚点对不对」的核心指标。
 //  0 = hook 挂在了一个系统从不调用的类上（静默死代码，血泪 §56）
+//  0 也可能是 %init 缺失导致全部 hook 未激活（更致命，且更隐蔽）
 //  >0 = 锚点命中，问题在后续链路
 static volatile int32_t sHookHits = 0;
+
+// ⭐⭐⭐ v0.2.1：本进程是否需要干预 —— 由 %ctor **一次性定死**，之后只读。
+//   为什么不用 WXGShouldIntervene()（读 CFPreferences）做门禁？
+//   layoutSubviews / setBackgroundColor: 是**布局热路径**，每秒可能调几百次，
+//   每次都去读配置文件既慢又危险（尤其全局注入后每个 App 都在跑这段代码）。
+//   → 只在 %ctor 读一次，结果缓存进内存标志。
+//   sActive   = 需要干预（命中微信输入法）
+//   sDiagMode = 强制启用但未命中：**只登记、不改 UI**（防止污染其它 App）
+static BOOL sActive = NO;
+static BOOL sDiagMode = NO;
 
 #pragma mark - 工具
 
@@ -255,6 +266,15 @@ static void WXGWorkerTick(void) {
 
 %ctor {
     @autoreleasepool {
+        // ⭐⭐⭐⭐⭐ 血泪大坑（v0.1.0 ~ v0.2.0 全部中招，白测三轮）：
+        //   Logos 铁律 —— **写了 %ctor 就必须显式 %init()**，
+        //   否则 %ctor 会完全取代 Logos 自动生成的构造器，
+        //   **下面所有 %hook 静默不激活**（编译过、CI 绿、deb 正常、插件正常加载，
+        //   但一条 hook 都没挂上 = 彻头彻尾的死代码）。
+        //   这正是「探针有启动横幅、却没有锚点命中、彩条也不出现」的直接根因。
+        //   👉 任何 %ctor 的第一行必须是 %init; 没有例外。
+        %init;
+
         // ⭐⭐ v0.2.0 铁律：本条日志必须在**任何** 进程判定/开关之前写。
         //  它是「插件有没有被注入到这个进程」的唯一证据。
         //  以前先判进程、不命中就 return，导致「没注入」和「注入了但被判定滤掉」
@@ -263,21 +283,53 @@ static void WXGWorkerTick(void) {
         WXGLog(@"bundleID   = %@", WXGBundleIDString());
         WXGLog(@"process    = %@ (pid=%d)", WXGProcessName(), (int)getpid());
         WXGLog(@"exePath    = %@", [[NSBundle mainBundle] executablePath] ?: @"?");
-        WXGLog(@"processHit = %d (1=判定为微信系)", WXGIsWeChatProcess() ? 1 : 0);
+        // ⭐ 运行时铁证：WBMainInputView 是**微信输入法自有类**
+        //   （KBStyle.dylib 逆向实锤：同为微信输入法着色插件，挂的就是这个类）。
+        //   它存在 ⇔ 本进程就是微信输入法键盘环境。
+        //   这比任何 bundle ID / 进程名猜测都可靠 —— 猜错了就是永远不注入。
+        BOOL hasWBClass = (objc_getClass("WBMainInputView") != nil);
+        BOOL procHit = WXGIsWeChatProcess();
+        BOOL forceOn = WXGBool(@"forceAll", NO);
+        WXGLog(@"processHit = %d (1=判定为微信系)  WBMainInputView存在=%d",
+               procHit ? 1 : 0, hasWBClass ? 1 : 0);
         WXGLog(@"enabled=%d forceAll=%d",
-               WXGBool(@"enabled", YES) ? 1 : 0, WXGBool(@"forceAll", NO) ? 1 : 0);
+               WXGBool(@"enabled", YES) ? 1 : 0, forceOn ? 1 : 0);
 
-        if (!WXGShouldIntervene()) {
-            WXGLog(@"⚠️ 不介入：%s", (!WXGBool(@"enabled", YES))
-                   ? "总开关关闭(enabled=NO)"
-                   : "进程未命中且 forceAll=NO —— 若确认本进程就是输入法，请在设置里打开「强制启用」");
+        if (!WXGBool(@"enabled", YES)) {
+            sActive = NO;
+            WXGLog(@"⚠️ 不介入：总开关关闭(enabled=NO)");
             return;
         }
-        WXGLog(@"已介入：%@（forceAll=%d）", WXGProcessName(), WXGBool(@"forceAll", NO) ? 1 : 0);
+
+        if (procHit || hasWBClass) {
+            // 命中：正常介入
+            sActive = YES;
+            sDiagMode = NO;
+            WXGLog(@"✅ 已介入：%@（procHit=%d WBClass=%d forceAll=%d）",
+                   WXGProcessName(), procHit ? 1 : 0, hasWBClass ? 1 : 0, forceOn ? 1 : 0);
+        } else if (forceOn) {
+            // ⭐ 强制启用且未命中 → 诊断模式：**只登记、不干预 UI**。
+            //   避免全局注入（com.apple.uikit）后在每个 App 里瞎插视图。
+            sActive = NO;
+            sDiagMode = YES;
+            WXGLog(@"🧪 强制启用但未命中：进入**诊断模式**（只登记、不改 UI）");
+        } else {
+            sActive = NO;
+            WXGLog(@"⚠️ 不介入：进程未命中且 forceAll=NO —— 若确认本进程就是输入法，请在设置里打开「强制启用」");
+            return;
+        }
 
         WXGStartWorker();
         // 心跳：每 2s 打一行，证明确实活着（也便于看 worker 有没有跑起来）
         WXGStartHeartbeat();
+
+        // ⭐ 自证 hook 是否真的挂上：%init 缺失时 sHookHits 恒为 0，
+        //   4 秒后主动打一行，避免「没有日志 = 以为探针坏了」
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            WXGLog(@"🔎 hook 自检：4s 内命中 %d 次（0 = hook 未生效，检查 %init）",
+                   (int)sHookHits);
+        });
 
         // 延后侦查：构造器阶段类可能还没注册齐
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
@@ -314,7 +366,7 @@ static void WXGWorkerTick(void) {
 %hook UIInputSetHostView
 - (void)layoutSubviews {
     %orig;
-    if (!WXGShouldIntervene()) return;
+    if (!sActive) return;   // ⭐ 内存标志（%ctor 定死），布局热路径零 IO
     // ⚠️ 只记弱引用 + 置脏标记，零视图操作
     sSeenHost = self;
     sDirty = YES;
@@ -333,7 +385,7 @@ static void WXGWorkerTick(void) {
 %hook UIInputWindowController
 - (void)viewDidLayoutSubviews {
     %orig;
-    if (!WXGShouldIntervene()) return;
+    if (!sActive) return;   // ⭐ 内存标志
     UIView *host = self.view;
     if (host && WXGIsKeyboardSized(host)) sSeenHost = host;
     sDirty = YES;
@@ -360,7 +412,7 @@ static void WXGWorkerTick(void) {
 // ============================================================
 %hook WBMainInputView
 - (void)setBackgroundColor:(UIColor *)color {
-    if (WXGShouldIntervene()) {
+    if (sActive) {   // ⭐ 内存标志，setBackgroundColor 是热路径
         CGFloat r = 0, g = 0, b = 0, a = 0;
         if (color && [color getRed:&r green:&g blue:&b alpha:&a]) {
             // 只拦「不透明」背景（alpha>0.95）；本身就是透明的设置放行
@@ -375,7 +427,7 @@ static void WXGWorkerTick(void) {
 
 - (void)layoutSubviews {
     %orig;
-    if (!WXGShouldIntervene()) return;
+    if (!sActive) return;   // ⭐ 内存标志
     // ⭐ Logos 生成的接口无父类声明，self 赋 UIView* 需显式强转（-Werror）
     sSeenHost = (UIView *)self;
     sDirty = YES;

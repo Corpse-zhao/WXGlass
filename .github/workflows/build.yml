@@ -133,6 +133,65 @@ jobs:
             || { echo "❌ 玻璃层必须 userInteractionEnabled = NO（否则可能挡住键盘触摸）"; exit 1; }
           echo "✅ 触摸安全"
 
+      - name: Lint 有 %ctor 必须有 %init（否则所有 hook 静默不激活）
+        run: |
+          set -e
+          python3 - <<'PY'
+          import re, sys
+          src = open("Tweak.x", encoding="utf-8").read()
+          # ⭐⭐⭐⭐⭐ 血泪：Logos 里一旦手写 %ctor，就会取代自动生成的构造器；
+          #   若 %ctor 内没有显式 %init;，**所有 %hook 静默不激活** ——
+          #   编译过、CI 绿、deb 正常、插件正常加载，但一条 hook 都没挂上。
+          #   这正是 v0.1.0~v0.2.0「装了毫无反应」的元凶（白测三轮）。
+          has_ctor = re.search(r'(?m)^\s*%ctor\b', src) is not None
+          if not has_ctor:
+              print("✅ 无 %ctor（Logos 自动生成构造器，无需 %init）")
+              sys.exit(0)
+          # 只在**非注释行**里找 %init; —— 否则注释里提到 %init 会造成假绿
+          code_lines = [l for l in src.split("\n") if not l.lstrip().startswith("//")]
+          code = "\n".join(code_lines)
+          if re.search(r'(?m)^\s*%init\s*;', code):
+              print("✅ %ctor 内含 %init;（hook 会真正激活）")
+          else:
+              print("❌ 有 %ctor 但没有 %init; → 所有 %hook 静默不激活！！！")
+              print("   ↑ 编译会过、CI 会绿、插件会加载，但一行注入代码都不会执行")
+              print("   → 在 %ctor { 之后第一行加： %init;")
+              sys.exit(1)
+          PY
+
+      - name: Lint 注入清单（ElleKit Bundles/Executables 语义）
+        run: |
+          set -e
+          python3 - <<'PY'
+          import plistlib, sys
+          with open("WXGlass.plist", "rb") as f:
+              raw = f.read()
+          try:
+              pl = plistlib.loads(raw)
+          except Exception:
+              import subprocess
+              subprocess.run(["plutil", "-convert", "xml1", "WXGlass.plist"], check=True)
+              pl = plistlib.load(open("WXGlass.plist", "rb"))
+          filt = pl.get("Filter") or {}
+          bundles = filt.get("Bundles") or []
+          exes = filt.get("Executables") or []
+          # ⭐ ElleKit 源码实锤（launchd/Implementations.swift）：
+          #   · 有 bundleID 的进程 **只看 Bundles，Executables 被完全忽略**
+          #   · Bundles 含 com.apple.uikit 即全局注入（ElleKit 内置 injectedBundles）
+          #   键盘是 app extension → 一定有 bundleID → 必须靠 Bundles 命中
+          if "com.apple.uikit" not in bundles:
+              print("❌ Filter.Bundles 缺 com.apple.uikit → 若真实 bundleID 与猜测不符则永不注入")
+              sys.exit(1)
+          if not exes:
+              print("❌ Filter.Executables 为空 → 无 bundleID 的进程注入不到")
+              sys.exit(1)
+          if not any("wetype" in b.lower() for b in bundles):
+              print(f"❌ Filter.Bundles 未覆盖 wetype（实际 {bundles}）")
+              sys.exit(1)
+          print(f"✅ Filter.Bundles = {bundles}")
+          print(f"✅ Filter.Executables = {exes}")
+          PY
+
       - name: Lint 禁止用字符串搜索断言包内 plist（二进制 plist 假阴性）
         run: |
           set -e
@@ -307,16 +366,18 @@ jobs:
           assert _e["isController"] in (True, "true", "YES", "1", 1), "❌ entry.isController 不是真值"
           print(f"✅ 入口 plist entry 包裹正确（bundle={_e['bundle']} detail={_e['detail']}）")
 
-          # ---- 2d. 注入过滤清单必须含 Executables ----
-          # ⭐ v0.2.0 血泪：微信输入法键盘是 app extension，跑在独立进程；
-          #    扩展进程的 mainBundle 在不同 iOS 版本下可能是宿主/扩展/临时容器，
-          #    只靠 Filter.Bundles 会漏注入 → 用户侧表现「装了完全没反应」。
-          #    Filter.Executables（按进程名匹配）是扩展进程最可靠的一条，必须有。
+          # ---- 2d. 注入过滤清单（ElleKit Bundles/Executables 语义）----
+          # ⭐ v0.2.1 定论（读 ElleKit launchd/Implementations.swift）：
+          #    Bundles 与 Executables **永不共同求值**，按进程有无 bundleID 二选一；
+          #    键盘是 app extension → 一定有 bundleID → **只走 Bundles 分支**。
+          #    Bundles 里放 com.apple.uikit = ElleKit 内置全局注入开关。
           _flt = _read_plist("Library/MobileSubstrate/DynamicLibraries/WXGlass.plist")
           _f = _flt.get("Filter", {})
           assert "Bundles" in _f, "❌ filter plist 缺 Filter.Bundles"
           assert "Executables" in _f, (
-              "❌ filter plist 缺 Filter.Executables（键盘扩展进程可能注入不到）")
+              "❌ filter plist 缺 Filter.Executables（无 bundleID 的进程走这条）")
+          assert "com.apple.uikit" in _f["Bundles"], (
+              "❌ Filter.Bundles 缺 com.apple.uikit → 键盘扩展进程可能永不注入")
           assert any("wetype" in b for b in _f["Bundles"]), (
               f"❌ Filter.Bundles 未覆盖 wetype（实际 {_f['Bundles']}）")
           print(f"✅ filter plist: Bundles={_f['Bundles']}")

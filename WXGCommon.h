@@ -7,7 +7,7 @@
 #import <objc/message.h>
 
 // 单一版本号来源 —— 所有展示/日志都必须引用它，不许手写第二份
-#define WXG_VERSION @"0.2.0"
+#define WXG_VERSION @"0.2.1"
 
 // 偏好域
 #define WXG_PREFS_DOMAIN @"com.banliren.wxglass"

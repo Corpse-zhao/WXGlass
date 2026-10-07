@@ -13,10 +13,25 @@
 // ============================================================
 
 // 设置侧版本（必须与 Tweak 侧 WXG_VERSION 手工保持一致）
-static NSString * const kDLPrefsVersion = @"0.2.0";
+static NSString * const kDLPrefsVersion = @"0.2.1";
 
 static NSString * const kWXGPrefsDomain = @"com.banliren.wxglass";
 static NSString * const kWXGProbePath = @"/var/mobile/Documents/WXGlass/wxg_probe.txt";
+
+// ⭐ v0.2.1：探针是**多路径兜底**写入的（键盘是沙盒 app extension，
+//   /var/mobile/Documents 很可能没有写权限 —— 这正是此前「探针没数据」的根因）。
+//   设置侧必须把**所有**候选路径都读一遍，否则永远显示空白。
+static NSArray<NSString *> *WXGProbePaths(void) {
+    NSMutableArray *a = [NSMutableArray array];
+    [a addObject:@"/var/mobile/Documents/WXGlass/wxg_probe.txt"];
+    [a addObject:@"/var/mobile/Library/WXGlass/wxg_probe.txt"];
+    NSString *home = NSHomeDirectory();
+    if (home.length) {
+        [a addObject:[home stringByAppendingPathComponent:@"Documents/wxg_probe.txt"]];
+        [a addObject:[home stringByAppendingPathComponent:@"tmp/wxg_probe.txt"]];
+    }
+    return a;
+}
 
 #pragma mark - 主设置控制器
 
@@ -52,6 +67,7 @@ static NSString * const kWXGProbePath = @"/var/mobile/Documents/WXGlass/wxg_prob
 
 @implementation WXGlassDiagController {
     NSString *_cachedProbe;
+    NSString *_cachedProbeSource;
 }
 
 - (id)specifiers {
@@ -68,13 +84,23 @@ static NSString * const kWXGProbePath = @"/var/mobile/Documents/WXGlass/wxg_prob
         [specs addObject:[self _infoSpec:@"判定" value:[self _verdict]]];
 
         PSSpecifier *g1 = [PSSpecifier groupSpecifierWithName:@"探针文件"];
-        [g1 setProperty:kWXGProbePath forKey:@"footerText"];
+        // footer 显示**实际读到的那一个**路径（多路径兜底，读到哪个显示哪个）
+        [g1 setProperty:[self _probeSource] forKey:@"footerText"];
         [specs addObject:g1];
 
         NSString *probe = [self _probeText];
         NSString *tail = [self _tailOf:probe lines:40];
         [specs addObject:[self _infoSpec:@"最近日志（末 40 行）"
                                    value:(tail.length ? tail : @"（空 —— 插件可能尚未在键盘进程运行过）")]];
+
+        // ⭐ v0.2.1：关键诊断指标，单独成组，一眼看出卡在哪一环
+        PSSpecifier *g3 = [PSSpecifier groupSpecifierWithName:@"关键指标"];
+        [g3 setProperty:@"hook 命中 0 次 = hook 根本没生效（最常见原因：%ctor 里漏了 %init）。"
+                  forKey:@"footerText"];
+        [specs addObject:g3];
+        [specs addObject:[self _infoSpec:@"进程命中" value:[self _extractAfter:@"processHit = " upTo:@" " fallback:@"（无）"]]];
+        [specs addObject:[self _infoSpec:@"WBMainInputView" value:[self _extractAfter:@"WBMainInputView存在=" upTo:@"\n" fallback:@"（无）"]]];
+        [specs addObject:[self _infoSpec:@"hook 命中次数" value:[self _extractAfter:@"🔎 hook 自检：4s 内命中 " upTo:@" 次" fallback:@"（无）"]]];
 
         PSSpecifier *g2 = [PSSpecifier groupSpecifierWithName:@"操作"];
         [g2 setProperty:@"刷新会重新读取探针文件；清空会删除探针，下次键盘弹出时重新写入。"
@@ -114,7 +140,14 @@ static NSString * const kWXGProbePath = @"/var/mobile/Documents/WXGlass/wxg_prob
 
 #pragma mark - 辅助
 
+// ⭐⭐ v0.2.1 关键修复：PSStaticTextCell 在 iOS 16 上**只 setProperty:forKey:@"value" 不显示**。
+//   用户截图证实三个字段全空白。三保险同时上：
+//   ① setProperty:forKey:@"value"         —— 连 cell 自己的 value 属性
+//   ② setProperty:forKey:@"valueGetter"   —— iOS 16 部分版本改读这个 key
+//   ③ cell 直接塞 detailTextLabel          —— cellForSpecifier 兜底
+//   ④ 兜底把值拼进 name                   —— 即使前三条全失效，用户仍能看到
 - (PSSpecifier *)_infoSpec:(NSString *)label value:(NSString *)value {
+    NSString *v = (value.length ? value : @"—");
     PSSpecifier *s = [PSSpecifier preferenceSpecifierNamed:label
                                                     target:self
                                                        set:NULL
@@ -122,17 +155,49 @@ static NSString * const kWXGProbePath = @"/var/mobile/Documents/WXGlass/wxg_prob
                                                     detail:nil
                                                       cell:PSStaticTextCell
                                                       edit:nil];
-    [s setProperty:(value ?: @"—") forKey:@"value"];
+    [s setProperty:v forKey:@"value"];
+    [s setProperty:v forKey:@"valueGetter"];
+    [s setProperty:v forKey:@"detail"];
+    // 兜底：值直接进 name（多行日志会很长，但至少不是一片空白）
+    if (v.length <= 60 && ![v containsString:@"\n"]) {
+        s.name = [NSString stringWithFormat:@"%@：%@", label, v];
+    }
     return s;
 }
 
 - (NSString *)_probeText {
     if (_cachedProbe) return _cachedProbe;
-    NSString *raw = [NSString stringWithContentsOfFile:kWXGProbePath
-                                              encoding:NSUTF8StringEncoding
-                                                 error:NULL];
-    _cachedProbe = raw ?: @"";
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray *chunks = [NSMutableArray array];
+    NSMutableArray *hits = [NSMutableArray array];
+    for (NSString *p in WXGProbePaths()) {
+        if (![fm fileExistsAtPath:p]) continue;
+        NSString *raw = [NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:NULL];
+        if (!raw.length) continue;
+        [hits addObject:p];
+        [chunks addObject:raw];
+    }
+    _cachedProbeSource = hits.count ? [hits componentsJoinedByString:@"\n"] : @"（四个候选路径都没有探针文件）";
+    _cachedProbe = chunks.count ? [chunks componentsJoinedByString:@"\n"] : @"";
     return _cachedProbe;
+}
+
+- (NSString *)_probeSource {
+    if (!_cachedProbe) (void)[self _probeText];   // 触发一次读取
+    return _cachedProbeSource ?: @"（未读取）";
+}
+
+// 从探针文本里抽出某个字段后面的值
+- (NSString *)_extractAfter:(NSString *)key upTo:(NSString *)terminator fallback:(NSString *)fb {
+    NSString *probe = [self _probeText];
+    if (!probe.length) return fb;
+    NSRange r = [probe rangeOfString:key];
+    if (r.location == NSNotFound) return fb;
+    NSString *rest = [probe substringFromIndex:NSMaxRange(r)];
+    NSRange end = [rest rangeOfString:terminator];
+    NSString *val = (end.location == NSNotFound) ? rest : [rest substringToIndex:end.location];
+    val = [val stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    return val.length ? val : fb;
 }
 
 - (NSString *)_tailOf:(NSString *)text lines:(NSInteger)n {
@@ -182,13 +247,18 @@ static NSString * const kWXGProbePath = @"/var/mobile/Documents/WXGlass/wxg_prob
 
 - (void)refreshProbe:(PSSpecifier *)sender {
     _cachedProbe = nil;
+    _cachedProbeSource = nil;
     _specifiers = nil;
     [self reloadSpecifiers];
 }
 
 - (void)clearProbe:(PSSpecifier *)sender {
-    [[NSFileManager defaultManager] removeItemAtPath:kWXGProbePath error:NULL];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *p in WXGProbePaths()) {   // ⭐ 多路径，全部清掉
+        [fm removeItemAtPath:p error:NULL];
+    }
     _cachedProbe = nil;
+    _cachedProbeSource = nil;
     _specifiers = nil;
     [self reloadSpecifiers];
 }

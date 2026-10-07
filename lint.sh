@@ -19,7 +19,7 @@ echo "═══ WXGlass 静态预检 ═══"
 echo ""
 
 # ── 1. 打包方案 ──────────────────────────────────────────────
-echo "[1/9] 打包方案（roothide 隐根）"
+echo "[1/10] 打包方案（roothide 隐根）"
 if grep -q 'THEOS_PACKAGE_SCHEME = roothide' Makefile 2>/dev/null; then
     ok "Makefile: THEOS_PACKAGE_SCHEME = roothide"
 else
@@ -40,7 +40,7 @@ fi
 
 # ── 2. 入口 plist ────────────────────────────────────────────
 echo ""
-echo "[2/9] PreferenceLoader 入口 plist"
+echo "[2/10] PreferenceLoader 入口 plist"
 ENTRY="Preferences/WXGlassEntry.plist"
 if [ -f "$ENTRY" ]; then
     if grep -q '<key>entry</key>' "$ENTRY"; then
@@ -61,7 +61,7 @@ fi
 
 # ── 3. bundle Info.plist ─────────────────────────────────────
 echo ""
-echo "[3/9] bundle Info.plist"
+echo "[3/10] bundle Info.plist"
 # ⭐ 必须在 Resources/ 下：Theos bundle.mk 只把 Resources/* 装进 bundle，
 #    放在 Preferences/ 根目录的 Info.plist 不会进包 → NSPrincipalClass 丢失 → 入口白屏
 INFO="Preferences/Resources/Info.plist"
@@ -79,7 +79,7 @@ fi
 
 # ── 4. 版本号一致性 ─────────────────────────────────────────
 echo ""
-echo "[4/9] 版本号一致性"
+echo "[4/10] 版本号一致性"
 TV=$(grep -oE 'WXG_VERSION @"[0-9.]+"' WXGCommon.h 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
 PV=$(grep -oE 'kDLPrefsVersion = @"[0-9.]+"' Preferences/WXGlassPrefs.mm 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
 CV=$(grep -E '^Version:' control 2>/dev/null | awk '{print $2}')
@@ -89,7 +89,7 @@ if [ -n "$TV" ] && [ "$TV" = "$CV" ]; then ok "Tweak 与 control 版本一致"; 
 
 # ── 5. 反馈环防护 ───────────────────────────────────────────
 echo ""
-echo "[5/9] 反馈环防护（hook 内禁止改视图树）"
+echo "[5/10] 反馈环防护（hook 内禁止改视图树）"
 if command -v python >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then
     PY=$(command -v python3 || command -v python)
     "$PY" - <<'PYEOF'
@@ -117,7 +117,7 @@ fi
 
 # ── 6. 运行时侦查 ───────────────────────────────────────────
 echo ""
-echo "[6/9] 运行时侦查（禁止纯硬编码私有类名）"
+echo "[6/10] 运行时侦查（禁止纯硬编码私有类名）"
 if grep -q 'objc_copyClassList' WXGRecon.m 2>/dev/null; then
     ok "WXGRecon.m 含 objc_copyClassList"
 else
@@ -131,20 +131,27 @@ fi
 
 # ── 7. 触摸安全 ─────────────────────────────────────────────
 echo ""
-echo "[7/9] 触摸安全"
+echo "[7/10] 触摸安全"
 if grep -q 'userInteractionEnabled = NO' WXGGlassView.m 2>/dev/null; then
     ok "玻璃层 userInteractionEnabled = NO"
 else
     bad "玻璃层未禁用交互 → 可能挡住键盘触摸"
 fi
 
-# ── 8. 注入清单必须含 Executables（键盘扩展进程靠它命中）──────
+# ── 8. 注入清单（⭐ ElleKit 语义：有 bundleID 的进程只看 Bundles）──
 echo ""
-echo "[8/9] 注入清单（键盘扩展进程）"
-if grep -q 'Executables' WXGlass.plist 2>/dev/null; then
-    ok "filter plist 含 Executables（扩展进程可靠命中）"
+echo "[8/10] 注入清单（ElleKit Bundles/Executables 语义）"
+# ⭐ ElleKit 源码实锤：Bundles 与 Executables **永不共同求值**。
+#   键盘是 app extension → 一定有 bundleID → 只走 Bundles 分支。
+if grep -q 'com.apple.uikit' WXGlass.plist 2>/dev/null; then
+    ok "Bundles 含 com.apple.uikit（ElleKit 全局注入开关，绕开 bundleID 猜测）"
 else
-    bad "filter plist 缺 Executables → 键盘扩展进程可能注入不到（血泪：只靠 Bundles 会漏）"
+    bad "Bundles 缺 com.apple.uikit → 若真实 bundleID 与猜测不符则永不注入（血泪）"
+fi
+if grep -q 'Executables' WXGlass.plist 2>/dev/null; then
+    ok "保留 Executables（无 bundleID 的进程走这条）"
+else
+    bad "filter plist 缺 Executables → 无 bundleID 的进程注入不到"
 fi
 if grep -q 'com.tencent.wetype' WXGlass.plist 2>/dev/null; then
     ok "filter plist 含 com.tencent.wetype"
@@ -154,7 +161,7 @@ fi
 
 # ── 9. 探针必须多路径兜底（沙盒进程可能写不了 Documents）──────
 echo ""
-echo "[9/9] 探针多路径兜底"
+echo "[9/10] 探针多路径兜底"
 if grep -q 'WXGProbeCandidates' WXGCommon.m 2>/dev/null; then
     ok "探针多路径尝试（避免沙盒写失败被误判成没注入）"
 else
@@ -171,6 +178,21 @@ if awk '/%ctor/,/^}/' Tweak.x 2>/dev/null | grep -n 'WXGLog' | head -1 \
     ok "启动横幅在进程判定之前（可区分「没注入」与「被滤掉」）"
 else
     bad "启动横幅未在进程判定之前 → 无法定位注入失败"
+fi
+
+# ── 10. ⭐⭐⭐ 致命项：%ctor 必须显式 %init ───────────────────
+echo ""
+echo "[10/10] Logos %init 铁律"
+if grep -q '%ctor' Tweak.x 2>/dev/null; then
+    # 只在非注释行里找 %init（否则注释里提到的 %init 会造成假绿）
+    if grep -vE '^\s*//' Tweak.x | grep -qE '^\s*%init\s*;'; then
+        ok "%ctor 内含 %init;（hook 会真正激活）"
+    else
+        bad "有 %ctor 但没有 %init; → 所有 %hook 静默不激活！！！"
+        bad "  ↑ 这是 v0.1.0~v0.2.0 白测三轮的元凶：编译过、CI 绿、装了毫无反应"
+    fi
+else
+    ok "无 %ctor（Logos 自动生成构造器，无需 %init）"
 fi
 
 # ── 汇总 ────────────────────────────────────────────────────
