@@ -20,8 +20,8 @@ jobs:
 
       - name: Setup SDK (iPhoneOS16.5)
         run: |
-          git clone --filter=blob:none --sparse https://github.com/theos/sdks.git sdks
-          cd sdks
+          git clone --filter=blob:none --sparse https://github.com/theos/sdks.git theos/sdks
+          cd theos/sdks
           git sparse-checkout set iPhoneOS16.5.sdk
           git lfs pull
 
@@ -39,7 +39,6 @@ jobs:
       - name: Build deb
         run: |
           export THEOS=$PWD/theos
-          export THEOS_SDK_DIR=$PWD/sdks
           cd tweak
           make clean
           make package FINALPACKAGE=1
