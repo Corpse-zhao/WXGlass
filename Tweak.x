@@ -15,25 +15,24 @@ static BOOL PFBool(NSString *key, BOOL def) {
     return v;
 }
 
-// ---------- 液态玻璃效果 ----------
+// ---------- 液态玻璃视图 ----------
 @interface WXGlassView : UIView
 @end
 
 @implementation WXGlassView
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
-        // 底色浓度(半透明基底)
-        CGFloat base = PFCGFloat(@"baseColor", 0.35);
-        CGFloat blurR = PFCGFloat(@"blurRadius", 20.0);      // 模糊强度
-        CGFloat glow  = PFCGFloat(@"glowStrength", 0.6);     // 高光强度
-        CGFloat edge  = PFCGFloat(@"edgeRefraction", 1.0);   // 边缘折射
+        CGFloat base = PFCGFloat(@"baseColor", 0.25);      // 底色浓度
+        CGFloat blurR = PFCGFloat(@"blurRadius", 20.0);    // 模糊强度
+        CGFloat glow  = PFCGFloat(@"glowStrength", 0.55);  // 高光强度
+        CGFloat edge  = PFCGFloat(@"edgeRefraction", 1.0); // 边缘折射
 
-        // 底色:半透明磨砂基底
-        self.backgroundColor = [UIColor colorWithWhite:0.12 alpha:base];
-        self.layer.cornerRadius = 18;
+        // 半透明磨砂基底
+        self.backgroundColor = [UIColor colorWithWhite:0.14 alpha:base];
+        self.layer.cornerRadius = 16;
         self.clipsToBounds = YES;
 
-        // 模糊层(UIVisualEffectView 提供真实背景模糊)
+        // 模糊层(键盘扩展沙盒下可能受限,尽力而为)
         if (blurR > 0.5) {
             UIBlurEffect *effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleLight];
             UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:effect];
@@ -42,59 +41,48 @@ static BOOL PFBool(NSString *key, BOOL def) {
             [self addSubview:blur];
         }
 
-        // 高光:顶部渐变白
+        // 高光:顶部渐变
         if (glow > 0.01) {
             CAGradientLayer *grad = [CAGradientLayer layer];
             grad.frame = CGRectMake(0, 0, frame.size.width, frame.size.height * 0.45);
             grad.colors = @[
-                (id)[[UIColor colorWithWhite:1.0 alpha:glow * 0.55] CGColor],
+                (id)[[UIColor colorWithWhite:1.0 alpha:glow * 0.5] CGColor],
                 (id)[[UIColor colorWithWhite:1.0 alpha:0.0] CGColor]
             ];
             grad.locations = @[@0.0, @1.0];
             [self.layer addSublayer:grad];
         }
 
-        // 边缘折射:描边高光
+        // 边缘折射:描边
         if (edge > 0.01) {
             self.layer.borderWidth = 1.0;
-            self.layer.borderColor = [[UIColor colorWithWhite:1.0 alpha:0.28 * edge] CGColor];
+            self.layer.borderColor = [[UIColor colorWithWhite:1.0 alpha:0.26 * edge] CGColor];
         }
     }
     return self;
 }
 @end
 
-// ---------- 注入入口 ----------
-static void WXApplyToWindow(UIWindow *win) {
-    if (!win) return;
-    // 在窗口上叠加一层液态玻璃遮罩(验证渲染)
-    WXGlassView *glass = [[WXGlassView alloc] initWithFrame:win.bounds];
+static void WXApplyToView(UIView *v) {
+    if (!v) return;
+    WXGlassView *glass = [[WXGlassView alloc] initWithFrame:v.bounds];
     glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     glass.userInteractionEnabled = NO;
-    [win addSubview:glass];
+    [v addSubview:glass];
 }
 
-%ctor {
+// ---------- Hook 键盘 ----------
+%hook UIInputViewController
+- (void)viewDidLoad {
+    %orig;
     if (!PFBool(@"enabled", YES)) return;
     dispatch_async(dispatch_get_main_queue(), ^{
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            @try {
-                UIWindow *kw = nil;
-                if (@available(iOS 13.0, *)) {
-                    for (UIScene *sc in [UIApplication sharedApplication].connectedScenes) {
-                        if ([sc isKindOfClass:[UIWindowScene class]]) {
-                            UIWindowScene *ws = (UIWindowScene *)sc;
-                            if (ws.keyWindow) { kw = ws.keyWindow; break; }
-                        }
-                    }
-                }
-                if (kw) {
-                    WXApplyToWindow(kw);
-                    NSLog(@"[WXGlass] injected & applied to window: %@", kw);
-                }
-            } @catch (NSException *e) {
-                NSLog(@"[WXGlass] caught: %@", e);
-            }
-        });
+        @try {
+            WXApplyToView(self.view);
+            NSLog(@"[WXGlass] keyboard glass applied to %@", self);
+        } @catch (NSException *e) {
+            NSLog(@"[WXGlass] caught: %@", e);
+        }
     });
 }
+%end
