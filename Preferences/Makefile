@@ -6,6 +6,8 @@ WXGlassPrefs_INSTALL_PATH = /Library/PreferenceBundles
 WXGlassPrefs_FRAMEWORKS = UIKit
 WXGlassPrefs_PRIVATE_FRAMEWORKS = Preferences
 WXGlassPrefs_CFLAGS = -fobjc-arc -Wall
+# ⭐ Apple ld 不搜 SDK 的 PrivateFrameworks —— 私有框架必须显式 -F（血坑）
+WXGlassPrefs_LDFLAGS = -F$(THEOS)/sdks/iPhoneOS16.5.sdk/System/Library/PrivateFrameworks
 # Settings.plist 放进 bundle 的 Resources，供 loadSpecifiersFromPlistName 读取
 WXGlassPrefs_RESOURCE_DIRS = Resources
 
