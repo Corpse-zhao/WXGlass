@@ -1,5 +1,7 @@
 include $(THEOS)/makefiles/common.mk
 
+export THEOS_PACKAGE_SCHEME = rootless
+
 TWEAK_NAME = WXGlass
 WXGlass_FILES = Tweak.x
 WXGlass_CFLAGS = -fobjc-arc
