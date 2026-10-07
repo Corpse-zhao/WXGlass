@@ -140,7 +140,7 @@ jobs:
 
       - name: Install build deps
         run: |
-          brew install make xz ldid dpkg 2>/dev/null || brew install make xz ldid
+          brew install make xz ldid
 
       - name: Clone roothide theos（必须这个分支才有 roothide scheme）
         run: |
@@ -151,23 +151,26 @@ jobs:
       - name: Verify roothide scheme exists
         run: |
           set -e
-          test -f "$THEOS/makefiles/package/roothide.mk" \
-            || { echo "❌ roothide.mk 不存在 —— theos 分支不对，必须 roothide/theos"; exit 1; }
-          echo "✅ roothide scheme 就位"
+          # ⭐ scheme 模块实际位置 = vendor/mod/roothide（不是 makefiles/package/）
+          test -f "$THEOS/vendor/mod/roothide/package.mk" \
+            || { echo "❌ vendor/mod/roothide/package.mk 不存在 —— theos 分支不对，必须 roothide/theos"; exit 1; }
+          echo "✅ roothide scheme 就位（vendor/mod/roothide）"
 
       - name: Download SDK (iPhoneOS16.5)
         run: |
           git clone --filter=blob:none --sparse https://github.com/theos/sdks.git sdksrc
           cd sdksrc
           git sparse-checkout set iPhoneOS16.5.sdk
+          git lfs pull || true
           cp -R iPhoneOS16.5.sdk "$THEOS/sdks/"
 
       - name: Build deb
         run: |
           set -euo pipefail
           cd tweak
-          make clean || true
-          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide 2>&1
+          # ⭐ macOS 必须用 brew 的 GNU Make（gmake），系统 make 太老会炸
+          gmake clean || true
+          gmake package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide 2>&1
           ls -la packages/
 
       - name: Verify deb (架构字段 + 内部布局)
