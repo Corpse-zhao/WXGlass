@@ -67,7 +67,7 @@ jobs:
           set -e
           python3 - <<'PY'
           import plistlib, sys
-          with open("Preferences/Info.plist","rb") as f:
+          with open("Preferences/Resources/Info.plist","rb") as f:
               d = plistlib.load(f)
           pc = d.get("NSPrincipalClass","")
           if pc in ("", "PSListController"):
@@ -90,9 +90,9 @@ jobs:
           [ "$T" = "$P" ] || { echo "❌ WXGCommon.h 与设置侧版本不一致（版本自检会误报）"; exit 1; }
           [ "$T" = "$C" ] || { echo "❌ control 版本与源码版本不一致"; exit 1; }
           # ⭐ bundle Info.plist 也必须同步（决定设置里显示的版本）
-          I=$(grep -A1 'CFBundleShortVersionString' Preferences/Info.plist | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          I=$(grep -A1 'CFBundleShortVersionString' Preferences/Resources/Info.plist | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
           echo "Info.plist=$I"
-          [ "$T" = "$I" ] || { echo "❌ Preferences/Info.plist 版本与源码不一致"; exit 1; }
+          [ "$T" = "$I" ] || { echo "❌ Preferences/Resources/Info.plist 版本与源码不一致"; exit 1; }
           # ⭐ CI 自身不许硬编码版本号（历史坑：升版后 Verify 假红）
           ! grep -qE 'Version: [0-9]+\.[0-9]+\.[0-9]+"' .github/workflows/build.yml \
             || { echo "❌ build.yml 里硬编码了版本号，应从 WXGCommon.h 推导"; exit 1; }
@@ -241,11 +241,23 @@ jobs:
           for need in (
               "Library/PreferenceLoader/Preferences/WXGlass.plist",
               "Library/PreferenceBundles/WXGlassPrefs.bundle/WXGlassPrefs",
+              "Library/PreferenceBundles/WXGlassPrefs.bundle/Info.plist",
+              "Library/PreferenceBundles/WXGlassPrefs.bundle/Settings.plist",
               "Library/MobileSubstrate/DynamicLibraries/WXGlass.dylib",
               "Library/MobileSubstrate/DynamicLibraries/WXGlass.plist",
           ):
               assert need in paths, f"❌ 包内缺少 {need}"
-          print("✅ 入口 plist / prefs bundle / tweak dylib / filter plist 齐全")
+          print("✅ 入口 plist / prefs bundle(含 Info.plist) / tweak dylib / filter plist 齐全")
+
+          # ---- 2b. bundle Info.plist 必须真的含 NSPrincipalClass ----
+          # ⭐ 历史坑：Info.plist 放在 Preferences/ 根目录不会被打进 bundle，
+          #    结果包内有控制器二进制但无 NSPrincipalClass → 设置入口点进去白屏。
+          _im = next(m for m in dt.getmembers()
+                     if m.name.lstrip("./") == "Library/PreferenceBundles/WXGlassPrefs.bundle/Info.plist")
+          _ib = dt.extractfile(_im).read().decode(errors="replace")
+          assert "<key>NSPrincipalClass</key>" in _ib, "❌ bundle Info.plist 缺 NSPrincipalClass 键"
+          assert "WXGlassPrefsListController" in _ib, "❌ NSPrincipalClass 不是 WXGlassPrefsListController"
+          print("✅ bundle Info.plist 含 NSPrincipalClass = WXGlassPrefsListController")
 
           # ---- 3. dylib 切片断言：必须含 arm64e (cpusubtype 0x80000002) ----
           # ⭐ cpusubtype 必须按无符号解析（0x80000002 有符号 = -2147483646，比较永远失败）

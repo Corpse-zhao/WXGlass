@@ -62,7 +62,9 @@ fi
 # ── 3. bundle Info.plist ─────────────────────────────────────
 echo ""
 echo "[3/7] bundle Info.plist"
-INFO="Preferences/Info.plist"
+# ⭐ 必须在 Resources/ 下：Theos bundle.mk 只把 Resources/* 装进 bundle，
+#    放在 Preferences/ 根目录的 Info.plist 不会进包 → NSPrincipalClass 丢失 → 入口白屏
+INFO="Preferences/Resources/Info.plist"
 if [ -f "$INFO" ]; then
     if grep -q '<string>WXGlassPrefsListController</string>' "$INFO"; then
         ok "NSPrincipalClass = WXGlassPrefsListController"
@@ -72,7 +74,7 @@ if [ -f "$INFO" ]; then
         bad "NSPrincipalClass 未设置或值不对"
     fi
 else
-    bad "$INFO 不存在"
+    bad "$INFO 不存在（放在 Preferences/ 根目录不会被打进 bundle）"
 fi
 
 # ── 4. 版本号一致性 ─────────────────────────────────────────
