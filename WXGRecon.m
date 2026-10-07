@@ -89,7 +89,16 @@ static void WXGDumpSubtree(UIView *v, NSInteger depth, NSInteger maxDepth,
 
     NSString *cls = NSStringFromClass([v class]);
     CGRect f = v.frame;
-    NSString *line = [NSString stringWithFormat:@"%@%@ {{%.0f,%.0f},{%.0f,%.0f}} a=%.2f h=%d uie=%d",
+
+    // 背景色信息：确认 WeType 浅灰背景的载体（backgroundColor vs layer）
+    NSString *bg = @"-";
+    UIColor *bc = v.backgroundColor;
+    CGFloat r, g, b, a;
+    if (bc && [bc getRed:&r green:&g blue:&b alpha:&a]) {
+        bg = [NSString stringWithFormat:@"rgba(%.2f,%.2f,%.2f,%.2f)", r, g, b, a];
+    }
+
+    NSString *line = [NSString stringWithFormat:@"%@%@ {{%.0f,%.0f},{%.0f,%.0f}} a=%.2f h=%d uie=%d bg=%@",
                                                 [@"" stringByPaddingToLength:(NSUInteger)(depth * 3)
                                                                   withString:@" "
                                                              startingAtIndex:0],
@@ -97,7 +106,8 @@ static void WXGDumpSubtree(UIView *v, NSInteger depth, NSInteger maxDepth,
                                                 f.origin.x, f.origin.y,
                                                 f.size.width, f.size.height,
                                                 v.alpha, v.hidden ? 1 : 0,
-                                                v.userInteractionEnabled ? 1 : 0];
+                                                v.userInteractionEnabled ? 1 : 0,
+                                                bg];
     [out addObject:line];
 
     for (UIView *sub in v.subviews) {

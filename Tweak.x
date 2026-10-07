@@ -79,6 +79,42 @@ static UIView *WXGFirstKeyLayerInHost(UIView *host) {
     return best;
 }
 
+#pragma mark - 背景板透明化（对抗 WeType 自绘不透明背景）
+
+// WeType 是自绘键盘：浅灰背景大概率来自「host 直接子视图中与宿主同宽的大背景板」。
+// 玻璃在 index 0 会被它盖住 → 必须把它压成半透明，玻璃才能透出 App 内容。
+// 判据按几何而非类名（铁律：不猜类名）：宽 ≥90% 宿主 且 高 ≥55% 宿主。
+// 幂等：每个 tick 重跑，微信点击后重刷背景也会在 0.4s 内被压回。
+static void WXGClearOpaqueBackdrops(UIView *host) {
+    if (!host) return;
+    CGRect hb = host.bounds;
+    CGFloat base = MAX(0.15, MIN(0.85, WXGCGFloat(@"baseColor", 0.25)));
+
+    for (UIView *sub in host.subviews) {
+        if (sub.tag == kWXGlassTag) continue;
+        CGRect f = sub.frame;
+        if (f.size.width < hb.size.width * 0.9) continue;
+        if (f.size.height < hb.size.height * 0.55) continue;
+
+        // backgroundColor 路径
+        UIColor *c = sub.backgroundColor;
+        CGFloat r, g, b, a;
+        if (c && [c getRed:&r green:&g blue:&b alpha:&a] && a > 0.95) {
+            sub.backgroundColor = [UIColor colorWithRed:r green:g blue:b alpha:base];
+        }
+        // layer.backgroundColor 路径（有的视图直接设 layer）
+        CGColorRef lc = sub.layer.backgroundColor;
+        if (lc) {
+            UIColor *lc2 = [UIColor colorWithCGColor:lc];
+            CGFloat r2, g2, b2, a2;
+            if ([lc2 getRed:&r2 green:&g2 blue:&b2 alpha:&a2] && a2 > 0.95) {
+                sub.layer.backgroundColor =
+                    [UIColor colorWithRed:r2 green:g2 blue:b2 alpha:base].CGColor;
+            }
+        }
+    }
+}
+
 #pragma mark - 玻璃层安装
 
 static void WXGPlaceGlassInHost(UIView *host) {
@@ -140,6 +176,7 @@ static void WXGRefresh(void) {
         }
 
         WXGPlaceGlassInHost(host);
+        WXGClearOpaqueBackdrops(host);   // ⭐ 每 tick 压背景，对抗微信点击后重刷
     }
 }
 
@@ -260,10 +297,32 @@ static void WXGWorkerTick(void) {
 //  锚点③：WBMainInputView（微信输入法自有类）
 //  ✅ 2026-10-07 实锤：KBStyle.dylib（同为微信输入法着色插件）
 //     正是用 MSHookMessageEx 挂此类的 layoutSubviews —— 类名真实存在。
-//     （此前「可能不存在被静默丢弃」的担忧解除）
 //  它的 frame 最贴合「键盘面板本尊」，优先级最高的宿主来源。
 // ============================================================
+
+// ============================================================
+//  背景/触摸误判修复（v0.1.1，用户真机反馈「点击一下就恢复原样」）：
+//  WeType 是自绘键盘，无系统 Keyplane → 玻璃插在 index 0 会被
+//  微信自己的不透明浅灰背景盖住；且每次点击微信都会重设背景色。
+//  → hook setBackgroundColor:（继承自 UIView，必然存在，不会静默丢弃）
+//    把每次刷上来的不透明背景拦成半透明，玻璃从底下透出 App 内容。
+//    （KBStyle 同路数，真机验证过稳定）
+// ============================================================
 %hook WBMainInputView
+- (void)setBackgroundColor:(UIColor *)color {
+    if (WXGIsWeChatProcess() && WXGBool(@"enabled", YES)) {
+        CGFloat r = 0, g = 0, b = 0, a = 0;
+        if (color && [color getRed:&r green:&g blue:&b alpha:&a]) {
+            // 只拦「不透明」背景（alpha>0.95）；本身就是透明的设置放行
+            if (a > 0.95) {
+                CGFloat base = MAX(0.15, MIN(0.85, WXGCGFloat(@"baseColor", 0.25)));
+                color = [UIColor colorWithRed:r green:g blue:b alpha:base];
+            }
+        }
+    }
+    %orig(color);
+}
+
 - (void)layoutSubviews {
     %orig;
     if (!WXGIsWeChatProcess()) return;

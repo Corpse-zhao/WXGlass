@@ -13,7 +13,7 @@
 // ============================================================
 
 // 设置侧版本（必须与 Tweak 侧 WXG_VERSION 手工保持一致）
-static NSString * const kDLPrefsVersion = @"0.1.0";
+static NSString * const kDLPrefsVersion = @"0.1.1";
 
 static NSString * const kWXGPrefsDomain = @"com.banliren.wxglass";
 static NSString * const kWXGProbePath = @"/var/mobile/Documents/WXGlass/wxg_probe.txt";
