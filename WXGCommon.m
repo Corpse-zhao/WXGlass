@@ -26,7 +26,7 @@ BOOL WXGBool(NSString *key, BOOL def) {
             v = CFBooleanGetValue(b);
         } else if (CFGetTypeID(b) == CFNumberGetTypeID()) {
             int tmp = 0;
-            CFNumberGetValue(b, kCFNumberIntType, &tmp);
+            CFNumberGetValue((CFNumberRef)b, kCFNumberIntType, &tmp);   // ⭐ CFBooleanRef→CFNumberRef 需显式强转（ARC 硬约束）
             v = (tmp != 0);
         }
         CFRelease(b);

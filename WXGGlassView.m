@@ -200,13 +200,12 @@ static id WXGNewFilter(NSString *name) {
         }
 
         // CALayer.filters 是私有属性 —— 用 KVC 设，避免链接符号
-        [_backdrop setValue:filters.isEmpty ? nil : filters forKey:@"filters"];
+        [_backdrop setValue:(filters.count == 0 ? nil : filters) forKey:@"filters"];
     } else {
         // 路线 A：UIBlurEffect 档位映射
+        // （blur<2 时用 UltraThin + alpha=0 等效关闭；UIBlurEffectStyleClear 在部分 SDK 头里未暴露）
         UIBlurEffectStyle bs;
-        if (blur < 2) {
-            bs = UIBlurEffectStyleClear;
-        } else if (blur < 8) {
+        if (blur < 8) {
             bs = dark ? UIBlurEffectStyleSystemUltraThinMaterialDark
                       : UIBlurEffectStyleSystemUltraThinMaterialLight;
         } else if (blur < 20) {
@@ -290,7 +289,8 @@ static id WXGNewFilter(NSString *name) {
 - (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
     [super traitCollectionDidChange:previousTraitCollection];
     if (@available(iOS 13.0, *)) {
-        if ([self.traitCollection hasDifferentColorAppearanceComparedTo:previousTraitCollection]) {
+        // ⭐ 正确选择器名是 hasDifferentColorAppearanceComparedToTraitCollection:
+        if ([self.traitCollection hasDifferentColorAppearanceComparedToTraitCollection:previousTraitCollection]) {
             [self refreshAppearance];
             [self _layoutLayers];
         }

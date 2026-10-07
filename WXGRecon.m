@@ -106,15 +106,13 @@ static void WXGDumpSubtree(UIView *v, NSInteger depth, NSInteger maxDepth,
 }
 
 static NSArray<UIWindow *> *WXGAllWindows(void) {
+    // ⭐ 只走 scene API（iOS 15 起 UIApplication.windows 已弃用，-Werror 会炸）
     NSMutableArray<UIWindow *> *all = [NSMutableArray array];
     for (UIScene *sc in UIApplication.sharedApplication.connectedScenes) {
         if (![sc isKindOfClass:[UIWindowScene class]]) continue;
         for (UIWindow *w in ((UIWindowScene *)sc).windows) {
             if (w && ![all containsObject:w]) [all addObject:w];
         }
-    }
-    for (UIWindow *w in UIApplication.sharedApplication.windows) {
-        if (w && ![all containsObject:w]) [all addObject:w];
     }
     return all;
 }
