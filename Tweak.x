@@ -68,7 +68,7 @@ static const NSInteger kWXGlassTag = 0x57161;
             [v insertSubview:glass atIndex:0];
         }
         glass.frame = v.bounds;
-        NSLog(@"[WXGlass] glass applied to WBMainInputView (%@)", NSStringFromClass([self class]));
+        NSLog(@"[WXGlass] glass applied to WBMainInputView (%@)", NSStringFromClass([v class]));
     } @catch (NSException *e) {
         NSLog(@"[WXGlass] caught: %@", e);
     }
